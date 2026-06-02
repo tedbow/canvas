@@ -4,7 +4,7 @@ Provides a translation dashboard for Canvas content, powered by [TMGMT](https://
 
 ## Requirements
 
-- [Drupal Canvas](https://www.drupal.org/project/experience_builder) (`canvas`)
+- [Drupal Canvas](https://www.drupal.org/project/canvas) (`canvas`)
 - [TMGMT](https://www.drupal.org/project/tmgmt) (`tmgmt`)
 - TMGMT Content (`tmgmt_content`) — for content entity translation
 - TMGMT Local (`tmgmt_local`) — recommended translator plugin
