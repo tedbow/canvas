@@ -70,16 +70,16 @@ For each component instance that was updated in the default translation, every n
 
 Whether an input key is translatable is determined by the same schema-driven mechanism established in ADR #10 — the `inputs` field property's method for enumerating translatable keys. There is no separate or parallel classification for the update propagation path.
 
-### 5. Config entity translations are reconciled at the override level
+### 5. Config entity translations are reconciled via in-memory staged overrides
 
-For config entities, where non-default translations are stored as sparse `LanguageConfigOverride` records containing only translatable overrides, propagation operates directly on those records:
+For config entities, where non-default translations are stored as sparse `LanguageConfigOverride` records containing only translatable overrides, propagation stages mutations in memory rather than writing to storage immediately:
 
-- Orphaned keys (props deleted in the new version) are pruned from the override.
+- Orphaned keys (props deleted in the new version) are pruned from the in-memory staged override.
 - The version identifier is structural metadata in the base config, not in the override, so it is already correct after the default-translation update.
 - New props do not appear in the override at all (their value comes from the base config), so no action is needed.
 - Non-translatable props do not appear in the override either (by definition, only translatable overrides are stored), so there is nothing to reconcile for them.
 
-If pruning leaves a component instance's override entry empty, the entry is removed entirely. If that leaves the override record itself empty, the override record is deleted. This prevents accumulation of empty override artifacts.
+If pruning leaves a component instance's override entry empty, the entry is removed from the staged override entirely. The caller is responsible for persisting staged overrides to storage (or staging them for auto-save) when it chooses to do so — mirroring the content entity pattern where reconciliation is in-memory only.
 
 ### 6. Reconciliation is guarded against being applied to the default translation
 
@@ -104,3 +104,5 @@ In order of importance, with the following markers:
 6. `-T` **Propagation requires all non-default translations to be accessible in memory at update time.** For content entities this means all translations are loaded during the update request. For a content entity with many translations, this is a memory overhead analogous to what `content_translation.synchronizer` already incurs on every presave. For config entities the overhead is minimal because only sparse override records are loaded.
 
 7. `≃T` **The update is still applied only to the default translation's tree.** Non-default translations are reconciled, not re-updated independently. This is correct because the update logic (which inputs to add, which to remove, what default values to use) is defined with respect to the component source and the default translation's actual values — not independently per translation.
+
+8. `+T` **Propagation tests use a minimal, rule-focused fixture rather than the canonical edge-case fixture.** The `ComponentTreeWithAllSymmetricalTranslationEdgeCasesTrait` fixture exercises prop-type edge cases (URI fields, rich prose, multi-value arrays, non-translatable booleans) for translation UI correctness tests. The propagation tests exercise different concerns — structural reconciliation rules when component versions change — for which a minimal two-prop fixture makes each case maximally legible. Sharing the fixture would add module dependencies and complexity without covering additional reconciliation rules.
