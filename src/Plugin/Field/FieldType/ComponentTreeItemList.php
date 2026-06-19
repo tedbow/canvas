@@ -616,7 +616,7 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
       $this->reconcileContentEntityTranslations($entity, $updated);
     }
     elseif ($entity instanceof ConfigEntityInterface) {
-      $this->reconcileConfigEntityTranslations($entity, $updated);
+      self::reconcileConfigEntityTranslations($entity, $updated);
     }
   }
 
@@ -636,7 +636,7 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
       // Assume the field has the same name as in the default translation.
       // FieldItemList::getParent() → EntityAdapter → entity.
       $field_name = $this->getName();
-      if ($field_name === NULL || !$translation->hasField($field_name)) {
+      if (!\is_string($field_name) || !$translation->hasField($field_name)) {
         continue;
       }
       $translation_tree = $translation->get($field_name);
@@ -671,7 +671,7 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
    * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
    *   Update snapshots keyed by UUID.
    */
-  private function reconcileConfigEntityTranslations(ConfigEntityInterface $entity, array $updated): void {
+  private static function reconcileConfigEntityTranslations(ConfigEntityInterface $entity, array $updated): void {
     $language_manager = \Drupal::languageManager();
     if (!$language_manager instanceof ConfigurableLanguageManagerInterface) {
       return;
