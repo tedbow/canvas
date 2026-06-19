@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Entity;
 
+use Drupal\canvas\Config\StagedLanguageConfigOverride;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemListInstantiatorTrait;
 use Drupal\Component\Serialization\Json;
 use Drupal\Core\Config\Entity\ConfigEntityBase;
 use Drupal\Core\Entity\EntityStorageInterface;
+use Drupal\language\Config\LanguageConfigOverride;
+use Drupal\language\ConfigurableLanguageManagerInterface;
 
 /**
  * @internal
@@ -29,6 +32,16 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * @var ?array<string, ComponentTreeItemArray>
    */
   protected ?array $component_tree;
+
+  /**
+   * Staged in-memory language config overrides, keyed by langcode.
+   *
+   * Populated lazily by getTranslation(). Repeated calls for the same langcode
+   * return the same instance, so in-memory mutations survive across calls.
+   *
+   * @var array<string, \Drupal\canvas\Config\StagedLanguageConfigOverride>
+   */
+  private array $stagedOverrides = [];
 
   /**
    * Transforms a component tree sequence to have no JSON strings as inputs.
@@ -158,6 +171,71 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
   public function postSave(EntityStorageInterface $storage, $update = TRUE): void {
     unset($this->typedData);
     parent::postSave($storage, $update);
+  }
+
+  /**
+   * Returns languages for which a non-empty LanguageConfigOverride exists.
+   *
+   * Analogous to TranslatableInterface::getTranslationLanguages(), but for
+   * config entities. Only returns languages that have an existing (non-new)
+   * override record, since config entity "translations" are sparse: a missing
+   * override means the base config applies unchanged for that language.
+   *
+   * @param bool $include_default
+   *   Whether to include the default language. Defaults to TRUE, but callers
+   *   that want to iterate only non-default translations should pass FALSE.
+   *
+   * @return \Drupal\Core\Language\LanguageInterface[]
+   *   Language objects keyed by langcode.
+   */
+  public function getTranslationLanguages(bool $include_default = TRUE): array {
+    $language_manager = \Drupal::languageManager();
+    if (!$language_manager instanceof ConfigurableLanguageManagerInterface) {
+      return [];
+    }
+    $default_langcode = $language_manager->getDefaultLanguage()->getId();
+    $config_name = $this->getConfigDependencyName();
+    $languages = [];
+    foreach ($language_manager->getLanguages() as $langcode => $language) {
+      if (!$include_default && $langcode === $default_langcode) {
+        continue;
+      }
+      if ($langcode === $default_langcode) {
+        $languages[$langcode] = $language;
+        continue;
+      }
+      $override = $language_manager->getLanguageConfigOverride($langcode, $config_name);
+      if (!$override->isNew()) {
+        $languages[$langcode] = $language;
+      }
+    }
+    return $languages;
+  }
+
+  /**
+   * Returns a staged in-memory language config override for the given langcode.
+   *
+   * Analogous to TranslatableInterface::getTranslation(), but returns a
+   * StagedLanguageConfigOverride rather than a translated entity object.
+   * The same instance is returned on repeated calls for the same langcode,
+   * so in-memory mutations (e.g. from reconciliation) survive across calls.
+   *
+   * Throws if called with the default language's langcode, since the default
+   * translation is the base config — not an override.
+   */
+  public function getTranslation(string $langcode): StagedLanguageConfigOverride {
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    \assert($langcode !== $language_manager->getDefaultLanguage()->getId(), 'getTranslation() must not be called with the default langcode; the default translation is the base config.');
+
+    if (!isset($this->stagedOverrides[$langcode])) {
+      $override = $language_manager->getLanguageConfigOverride($langcode, $this->getConfigDependencyName());
+      \assert($override instanceof LanguageConfigOverride);
+      $this->stagedOverrides[$langcode] = $override->isNew()
+        ? StagedLanguageConfigOverride::createEmpty($langcode, $this->getConfigDependencyName())
+        : StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
+    }
+    return $this->stagedOverrides[$langcode];
   }
 
 }
