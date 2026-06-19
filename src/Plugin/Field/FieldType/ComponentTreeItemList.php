@@ -19,13 +19,17 @@ use Drupal\Component\Utility\NestedArray;
 use Drupal\Component\Utility\SortArray;
 use Drupal\Core\Cache\CacheableDependencyInterface;
 use Drupal\Core\Cache\CacheableMetadata;
+use Drupal\Core\Config\Entity\ConfigEntityInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
 use Drupal\Core\Entity\Plugin\DataType\EntityAdapter;
+use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\Field\FieldItemList;
 use Drupal\Core\Form\EnforcedResponseException;
 use Drupal\Core\Form\FormAjaxException;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Render\RenderableInterface;
+use Drupal\language\Config\LanguageConfigOverride;
+use Drupal\language\ConfigurableLanguageManagerInterface;
 
 /**
  * A component tree: a list item class for ComponentTreeItem.
@@ -573,6 +577,165 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
    * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $subTreeItemList
    * @return $this
    */
+
+  /**
+   * Reconciles all translations after component instances in this tree updated.
+   *
+   * After the default translation's component instances are updated to a new
+   * version (via updateComponentInstances()), call this to propagate the
+   * structural changes (added/removed props, new component version) to every
+   * other translation of the host entity.
+   *
+   * For content entities the translation's field items are updated in-memory.
+   * The caller is responsible for persisting the translations if needed (e.g.
+   * creating per-translation auto-saves).
+   *
+   * For config entities the LanguageConfigOverride for each translation is
+   * updated and saved immediately, since config entity translations have no
+   * separate "auto-save" layer.
+   *
+   * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
+   *   Keyed by component instance UUID. Each entry holds:
+   *   - inputs_before: the default translation's inputs before the update.
+   *   - inputs_after: the default translation's inputs after the update.
+   *   - version_after: the component version after the update.
+   *   - default_explicit_input: all prop defaults/examples from the new
+   *     version's component source (covers new optional props).
+   */
+  public function reconcileTranslationsWithUpdatedItems(array $updated): void {
+    if (empty($updated)) {
+      return;
+    }
+
+    $entity = $this->getParent() !== NULL ? $this->getEntity() : NULL;
+    if ($entity === NULL) {
+      return;
+    }
+
+    if ($entity instanceof TranslatableInterface) {
+      $this->reconcileContentEntityTranslations($entity, $updated);
+    }
+    elseif ($entity instanceof ConfigEntityInterface) {
+      $this->reconcileConfigEntityTranslations($entity, $updated);
+    }
+  }
+
+  /**
+   * Reconciles translations for a content entity.
+   *
+   * @param \Drupal\Core\Entity\TranslatableInterface $entity
+   *   The default-translation entity whose component tree was just updated.
+   * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
+   *   Update snapshots keyed by UUID.
+   */
+  private function reconcileContentEntityTranslations(TranslatableInterface $entity, array $updated): void {
+    // include_default: FALSE — skip the default translation (already updated).
+    foreach ($entity->getTranslationLanguages(include_default: FALSE) as $language) {
+      $translation = $entity->getTranslation($language->getId());
+      \assert($translation instanceof FieldableEntityInterface);
+      // Assume the field has the same name as in the default translation.
+      // FieldItemList::getParent() → EntityAdapter → entity.
+      $field_name = $this->getName();
+      if ($field_name === NULL || !$translation->hasField($field_name)) {
+        continue;
+      }
+      $translation_tree = $translation->get($field_name);
+      \assert($translation_tree instanceof ComponentTreeItemList);
+
+      foreach ($updated as $uuid => $snapshot) {
+        $translation_item = $translation_tree->getComponentTreeItemByUuid($uuid);
+        if ($translation_item === NULL) {
+          continue;
+        }
+        $translation_item->reconcileWithUpdatedDefaultTranslation(
+          $snapshot['inputs_before'],
+          $snapshot['inputs_after'],
+          $snapshot['version_after'],
+          $snapshot['default_explicit_input'] ?? [],
+        );
+      }
+    }
+  }
+
+  /**
+   * Reconciles translations for a config entity via LanguageConfigOverride.
+   *
+   * Config entity translations store only the translatable subset of inputs in
+   * a LanguageConfigOverride. This method adjusts each override to match the
+   * new component version by removing inputs for deleted props and leaving
+   * the remaining translatable inputs intact (the base config provides
+   * values for any new non-translatable props).
+   *
+   * @param \Drupal\Core\Config\Entity\ConfigEntityInterface $entity
+   *   The config entity whose component tree was just updated.
+   * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
+   *   Update snapshots keyed by UUID.
+   */
+  private function reconcileConfigEntityTranslations(ConfigEntityInterface $entity, array $updated): void {
+    $language_manager = \Drupal::languageManager();
+    if (!$language_manager instanceof ConfigurableLanguageManagerInterface) {
+      return;
+    }
+
+    $config_name = $entity->getConfigDependencyName();
+    $default_langcode = $language_manager->getDefaultLanguage()->getId();
+
+    foreach ($language_manager->getLanguages() as $langcode => $language) {
+      if ($langcode === $default_langcode) {
+        continue;
+      }
+
+      $override = $language_manager->getLanguageConfigOverride($langcode, $config_name);
+      \assert($override instanceof LanguageConfigOverride);
+      if ($override->isNew()) {
+        continue;
+      }
+
+      $override_dirty = FALSE;
+      foreach ($updated as $uuid => $snapshot) {
+        $stored = $override->get("component_tree.$uuid.inputs");
+        if (!\is_array($stored) || empty($stored)) {
+          continue;
+        }
+
+        // Determine the full set of valid prop keys for the new version.
+        $valid_keys_after = $snapshot['inputs_after'] + \array_fill_keys(\array_keys($snapshot['default_explicit_input'] ?? []), NULL);
+        // Remove inputs for props deleted in the new version.
+        $reconciled = \array_intersect_key($stored, $valid_keys_after);
+
+        if ($reconciled === $stored) {
+          continue;
+        }
+
+        if (empty($reconciled)) {
+          $override->clear("component_tree.$uuid");
+        }
+        else {
+          $override->set("component_tree.$uuid.inputs", $reconciled);
+        }
+        $override_dirty = TRUE;
+      }
+
+      if (!$override_dirty) {
+        continue;
+      }
+
+      $component_tree_data = $override->get('component_tree');
+      if (empty($component_tree_data)) {
+        $override->clear('component_tree');
+      }
+
+      if (empty($override->get())) {
+        if (!$override->isNew()) {
+          $override->delete();
+        }
+      }
+      else {
+        $override->save();
+      }
+    }
+  }
+
   public function injectSubTreeItemList(array $exposed_slot_info, ComponentTreeItemList $subTreeItemList): self {
     foreach ($exposed_slot_info as $slot_detail) {
       $parent_uuid = $slot_detail['component_uuid'] ?? NULL;

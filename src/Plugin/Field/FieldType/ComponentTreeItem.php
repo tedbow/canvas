@@ -17,6 +17,7 @@ use Drupal\Component\Utility\NestedArray;
 use Drupal\Core\Block\MessagesBlockPluginInterface;
 use Drupal\Core\Block\TitleBlockPluginInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\Entity\TypedData\EntityDataDefinition;
 use Drupal\Core\Field\Attribute\FieldType;
 use Drupal\Core\Field\FieldDefinitionInterface;
@@ -550,6 +551,96 @@ class ComponentTreeItem extends FieldItemBase {
 
   public function setInput(string|array $input): self {
     return $this->set('inputs', $input);
+  }
+
+  /**
+   * Reconciles this translation item's inputs against a change in the default.
+   *
+   * Call this on a non-default translation item after the default translation's
+   * item has been updated to a new component version. The method adjusts the
+   * translation's inputs to stay valid for the new version:
+   * - Removes inputs for props deleted in the new version.
+   * - Adds inputs for new props, using the default's new value when available,
+   *   or the component's default explicit input otherwise (covers new optional
+   *   props that the updater does not inject into the default translation).
+   * - For non-translatable props that still exist, takes the default's value.
+   * - Preserves the translation's own value for translatable props.
+   * - Updates component_version to the new version.
+   *
+   * Throws if called on the default translation, since reconciling the default
+   * against itself would be a programming error.
+   *
+   * @param array $inputs_before
+   *   The default translation's inputs BEFORE the update.
+   * @param array $inputs_after
+   *   The default translation's inputs AFTER the update.
+   * @param string $version_after
+   *   The component version AFTER the update.
+   * @param array $default_explicit_input
+   *   All prop defaults/examples from the new version's component source,
+   *   keyed by prop name. Each entry may contain a 'value' key. This is used
+   *   to supply values for new optional props that were not added to the
+   *   default translation's inputs by the updater.
+   *
+   * @throws \InvalidArgumentException
+   *   If this item belongs to the default translation.
+   */
+  public function reconcileWithUpdatedDefaultTranslation(array $inputs_before, array $inputs_after, string $version_after, array $default_explicit_input = []): void {
+    $entity = $this->getEntity();
+    if ($entity instanceof TranslatableInterface && $entity->isDefaultTranslation()) {
+      throw new \InvalidArgumentException(\sprintf(
+        '%s::reconcileWithUpdatedDefaultTranslation() must be called on a non-default translation item; the default translation of "%s" "%s" was passed.',
+        self::class,
+        $entity->getEntityTypeId(),
+        $entity->id(),
+      ));
+    }
+
+    $my_inputs = $this->getInputs() ?? [];
+
+    // Determine the full set of valid prop keys in the new version.
+    // $inputs_after only contains props the updater injected (required ones);
+    // $default_explicit_input covers all props including new optional ones.
+    $valid_keys_after = $inputs_after + \array_fill_keys(\array_keys($default_explicit_input), NULL);
+
+    // Remove inputs for props deleted in the new version.
+    $my_inputs = \array_intersect_key($my_inputs, $valid_keys_after);
+
+    // Determine which keys are translatable for this item.
+    $translatable_keys = \array_flip($this->get('inputs')->getTranslatableInputKeys());
+
+    // For each prop that exists in the new version:
+    foreach ($valid_keys_after as $key => $_placeholder) {
+      $is_new = !\array_key_exists($key, $inputs_before);
+
+      // Resolve the "canonical" new-version value for this prop:
+      // prefer the default translation's actual value, fall back to the
+      // component's example/default value for new optional props.
+      $canonical_value = \array_key_exists($key, $inputs_after)
+        ? $inputs_after[$key]
+        : ($default_explicit_input[$key]['value'] ?? NULL);
+
+      if ($is_new) {
+        // New prop: seed with the canonical new-version value.
+        if ($canonical_value !== NULL) {
+          $my_inputs[$key] = $canonical_value;
+        }
+        continue;
+      }
+
+      if (\array_key_exists($key, $translatable_keys)) {
+        // Translatable prop: preserve this translation's own value.
+        continue;
+      }
+
+      // Non-translatable prop that still exists: sync to the canonical value.
+      if ($canonical_value !== NULL) {
+        $my_inputs[$key] = $canonical_value;
+      }
+    }
+
+    $this->setInput($my_inputs);
+    $this->set('component_version', $version_after);
   }
 
   public function getLabel(): ?string {

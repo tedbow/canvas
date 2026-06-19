@@ -276,6 +276,10 @@ final class ComponentSourceManager extends DefaultPluginManager {
    */
   public function updateComponentInstances(ComponentTreeItemList $component_tree): bool {
     $wasModified = FALSE;
+    // Keyed by UUID: snapshot of inputs/version before the update, and
+    // inputs/version after, so translations can be reconciled afterwards.
+    $updated_snapshots = [];
+
     foreach ($component_tree as $item) {
       \assert($item instanceof ComponentTreeItem);
       $component = $item->getComponent();
@@ -292,11 +296,28 @@ final class ComponentSourceManager extends DefaultPluginManager {
       \assert($updater instanceof ComponentInstanceUpdaterInterface);
       // Check if update is needed and safe, then perform the update.
       if ($updater->isUpdateNeeded($item) && $updater->canUpdate($item)) {
+        $uuid = $item->getUuid();
+        $inputs_before = $item->getInputs() ?? [];
         $update_result = $updater->update($item);
         \assert($update_result === ComponentInstanceUpdateAttemptResult::Latest);
         $wasModified = TRUE;
+        // After the update, load the target source to get all prop defaults.
+        // This is needed so translations receive values for new optional props
+        // even though the updater only injects defaults for required ones.
+        $target_source = $item->getComponent()?->getComponentSource();
+        $updated_snapshots[$uuid] = [
+          'inputs_before' => $inputs_before,
+          'inputs_after' => $item->getInputs() ?? [],
+          'version_after' => $item->getComponentVersion(),
+          'default_explicit_input' => $target_source?->getDefaultExplicitInput() ?? [],
+        ];
       }
     }
+
+    if ($wasModified) {
+      $component_tree->reconcileTranslationsWithUpdatedItems($updated_snapshots);
+    }
+
     return $wasModified;
   }
 
