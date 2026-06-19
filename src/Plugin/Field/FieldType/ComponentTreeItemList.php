@@ -9,6 +9,7 @@ use Drupal\canvas\ComponentSource\ComponentSourceWithSlotsInterface;
 use Drupal\canvas\ComponentSource\ComponentSourceWithSwitchCasesInterface;
 use Drupal\canvas\Element\RenderSafeComponentContainer;
 use Drupal\canvas\Entity\Component;
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Exception\SubtreeInjectionException;
 use Drupal\canvas\HydratedTree;
@@ -19,7 +20,6 @@ use Drupal\Component\Utility\NestedArray;
 use Drupal\Component\Utility\SortArray;
 use Drupal\Core\Cache\CacheableDependencyInterface;
 use Drupal\Core\Cache\CacheableMetadata;
-use Drupal\Core\Config\Entity\ConfigEntityInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
 use Drupal\Core\Entity\Plugin\DataType\EntityAdapter;
 use Drupal\Core\Entity\TranslatableInterface;
@@ -28,8 +28,6 @@ use Drupal\Core\Form\EnforcedResponseException;
 use Drupal\Core\Form\FormAjaxException;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Render\RenderableInterface;
-use Drupal\language\Config\LanguageConfigOverride;
-use Drupal\language\ConfigurableLanguageManagerInterface;
 
 /**
  * A component tree: a list item class for ComponentTreeItem.
@@ -590,9 +588,9 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
    * The caller is responsible for persisting the translations if needed (e.g.
    * creating per-translation auto-saves).
    *
-   * For config entities the LanguageConfigOverride for each translation is
-   * updated and saved immediately, since config entity translations have no
-   * separate "auto-save" layer.
+   * For config entities each translation's StagedLanguageConfigOverride is
+   * updated in-memory (via ComponentTreeConfigEntityBase::getTranslation()).
+   * The caller is responsible for persisting the staged overrides when needed.
    *
    * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
    *   Keyed by component instance UUID. Each entry holds:
@@ -615,7 +613,7 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
     if ($entity instanceof TranslatableInterface) {
       $this->reconcileContentEntityTranslations($entity, $updated);
     }
-    elseif ($entity instanceof ConfigEntityInterface) {
+    elseif ($entity instanceof ComponentTreeConfigEntityBase) {
       self::reconcileConfigEntityTranslations($entity, $updated);
     }
   }
@@ -658,42 +656,30 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
   }
 
   /**
-   * Reconciles translations for a config entity via LanguageConfigOverride.
+   * Reconciles translations for a config entity via staged overrides.
    *
    * Config entity translations store only the translatable subset of inputs in
-   * a LanguageConfigOverride. This method adjusts each override to match the
-   * new component version by removing inputs for deleted props and leaving
-   * the remaining translatable inputs intact (the base config provides
-   * values for any new non-translatable props).
+   * LanguageConfigOverride records. This method adjusts each translation's
+   * staged override (loaded in-memory via ComponentTreeConfigEntityBase::
+   * getTranslation()) to match the new component version by removing inputs
+   * for deleted props. The base config provides values for any new props, so
+   * no action is needed for new keys.
    *
-   * @param \Drupal\Core\Config\Entity\ConfigEntityInterface $entity
+   * Mutations are kept in-memory on the entity via StagedLanguageConfigOverride.
+   * The caller is responsible for persisting the staged overrides when needed.
+   *
+   * @param \Drupal\canvas\Entity\ComponentTreeConfigEntityBase $entity
    *   The config entity whose component tree was just updated.
    * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
    *   Update snapshots keyed by UUID.
    */
-  private static function reconcileConfigEntityTranslations(ConfigEntityInterface $entity, array $updated): void {
-    $language_manager = \Drupal::languageManager();
-    if (!$language_manager instanceof ConfigurableLanguageManagerInterface) {
-      return;
-    }
+  private static function reconcileConfigEntityTranslations(ComponentTreeConfigEntityBase $entity, array $updated): void {
+    foreach ($entity->getTranslationLanguages(include_default: FALSE) as $langcode => $language) {
+      $staged = $entity->getTranslation($langcode);
 
-    $config_name = $entity->getConfigDependencyName();
-    $default_langcode = $language_manager->getDefaultLanguage()->getId();
-
-    foreach ($language_manager->getLanguages() as $langcode => $language) {
-      if ($langcode === $default_langcode) {
-        continue;
-      }
-
-      $override = $language_manager->getLanguageConfigOverride($langcode, $config_name);
-      \assert($override instanceof LanguageConfigOverride);
-      if ($override->isNew()) {
-        continue;
-      }
-
-      $override_dirty = FALSE;
+      $staged_dirty = FALSE;
       foreach ($updated as $uuid => $snapshot) {
-        $stored = $override->get("component_tree.$uuid.inputs");
+        $stored = $staged->get("component_tree.$uuid.inputs");
         if (!\is_array($stored) || empty($stored)) {
           continue;
         }
@@ -708,30 +694,22 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
         }
 
         if (empty($reconciled)) {
-          $override->clear("component_tree.$uuid");
+          $staged->clear("component_tree.$uuid");
         }
         else {
-          $override->set("component_tree.$uuid.inputs", $reconciled);
+          $staged->set("component_tree.$uuid.inputs", $reconciled);
         }
-        $override_dirty = TRUE;
+        $staged_dirty = TRUE;
       }
 
-      if (!$override_dirty) {
+      if (!$staged_dirty) {
         continue;
       }
 
-      $component_tree_data = $override->get('component_tree');
+      // Prune empty component_tree entry left by clearing all UUIDs.
+      $component_tree_data = $staged->get('component_tree');
       if (empty($component_tree_data)) {
-        $override->clear('component_tree');
-      }
-
-      if (empty($override->get())) {
-        if (!$override->isNew()) {
-          $override->delete();
-        }
-      }
-      else {
-        $override->save();
+        $staged->clear('component_tree');
       }
     }
   }

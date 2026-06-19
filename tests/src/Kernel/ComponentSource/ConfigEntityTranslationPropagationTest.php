@@ -39,19 +39,6 @@ use PHPUnit\Framework\Attributes\Group;
 #[Group('canvas_translation')]
 final class ConfigEntityTranslationPropagationTest extends CanvasKernelTestBase {
 
-  /**
-   * {@inheritdoc}
-   *
-   * Disable strict config schema for this test class. The LanguageConfigOverride
-   * schema checker validates overrides by merging them with the base config at
-   * save time. updateComponentInstances() saves the reconciled override before
-   * the caller can persist the updated base config entity, so the checker would
-   * incorrectly flag deleted prop keys as unknown — those keys are valid in the
-   * base config until the caller saves the entity. In production, the schema
-   * checker is absent; this mirrors that environment.
-   */
-  protected $strictConfigSchema = FALSE;
-
   use GenerateComponentConfigTrait;
 
   protected static $modules = [
@@ -179,27 +166,25 @@ final class ConfigEntityTranslationPropagationTest extends CanvasKernelTestBase 
     $was_modified = $manager->updateComponentInstances($tree);
     self::assertSame($expected_modified, $was_modified);
 
-    $language_manager = \Drupal::languageManager();
-    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    $override = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName());
-    \assert($override instanceof LanguageConfigOverride);
+    // Reconciliation stages changes in-memory on the entity; read them back.
+    $staged = $this->pageRegion->getTranslation('es');
 
     if (empty($expected_remaining_override_inputs)) {
-      // All translatable inputs were deleted: override should be gone entirely.
-      self::assertTrue($override->isNew(), 'Override must be deleted when no translatable inputs remain.');
+      // All translatable inputs were deleted: staged override should be empty.
+      self::assertTrue($staged->isNew(), 'Staged override must be empty when no translatable inputs remain.');
     }
     else {
-      self::assertFalse($override->isNew(), 'Override must still exist.');
-      $stored = $override->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+      self::assertFalse($staged->isNew(), 'Staged override must still have data.');
+      $stored = $staged->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
       self::assertIsArray($stored);
       if ($removed_key !== NULL) {
-        self::assertArrayNotHasKey($removed_key, $stored, "Deleted prop must be pruned from override.");
+        self::assertArrayNotHasKey($removed_key, $stored, "Deleted prop must be pruned from staged override.");
       }
       if ($new_key !== NULL) {
         // New props are seeded on the base config (default translation), not
         // in the LanguageConfigOverride, so they must NOT appear in the
-        // override.
-        self::assertArrayNotHasKey($new_key, $stored, "New props must not appear in config override (base config provides them).");
+        // staged override.
+        self::assertArrayNotHasKey($new_key, $stored, "New props must not appear in staged config override.");
       }
       self::assertSame($expected_remaining_override_inputs, $stored);
     }
@@ -279,11 +264,8 @@ final class ConfigEntityTranslationPropagationTest extends CanvasKernelTestBase 
     $was_modified = $manager->updateComponentInstances($tree);
     self::assertTrue($was_modified);
 
-    $language_manager = \Drupal::languageManager();
-    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    $override = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName());
-    // No override existed before — reconciliation must not create one.
-    self::assertTrue($override->isNew(), 'No override should be created for a language with no prior translation.');
+    // No override existed before — reconciliation must not populate a staged one.
+    self::assertTrue($this->pageRegion->getTranslation('es')->isNew(), 'No staged override should be created for a language with no prior translation.');
   }
 
   /**
@@ -317,11 +299,12 @@ final class ConfigEntityTranslationPropagationTest extends CanvasKernelTestBase 
     $was_modified = $manager->updateComponentInstances($tree);
     self::assertTrue($was_modified);
 
-    $es_stored = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName())
+    // Both staged overrides should have optional_text pruned in-memory.
+    $es_stored = $this->pageRegion->getTranslation('es')
       ->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
     self::assertSame(['required_text' => 'Hola mundo'], $es_stored);
 
-    $fr_stored = $language_manager->getLanguageConfigOverride('fr', $this->pageRegion->getConfigDependencyName())
+    $fr_stored = $this->pageRegion->getTranslation('fr')
       ->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
     self::assertSame(['required_text' => 'Bonjour monde'], $fr_stored);
   }
