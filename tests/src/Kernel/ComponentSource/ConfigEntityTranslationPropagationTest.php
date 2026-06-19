@@ -1,0 +1,376 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\Tests\canvas\Kernel\ComponentSource;
+
+// cspell:ignore Hallo mundo Hola opcional
+
+use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\Entity\JavaScriptComponent;
+use Drupal\canvas\Entity\PageRegion;
+use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
+use Drupal\language\Config\LanguageConfigOverride;
+use Drupal\language\ConfigurableLanguageManagerInterface;
+use Drupal\language\Entity\ConfigurableLanguage;
+use Drupal\Tests\canvas\Kernel\CanvasKernelTestBase;
+use Drupal\Tests\canvas\Traits\GenerateComponentConfigTrait;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Group;
+
+/**
+ * Tests component instance version update propagation to config translations.
+ *
+ * Validates that after the default (English) component tree is updated via
+ * ComponentSourceManager::updateComponentInstances(), each language's
+ * LanguageConfigOverride is reconciled: deleted-prop keys are pruned,
+ * and orphan-free overrides are deleted in their entirety.
+ *
+ * Config entity translations store only the translatable subset of inputs in
+ * LanguageConfigOverride records (sparse, not a full copy). Propagation
+ * therefore operates at the override level, not at the entity level.
+ */
+#[CoversClass(ComponentSourceManager::class)]
+#[CoversClass(ComponentTreeItemList::class)]
+#[Group('canvas')]
+#[Group('canvas_component_sources')]
+#[Group('canvas_data_model')]
+#[Group('canvas_translation')]
+final class ConfigEntityTranslationPropagationTest extends CanvasKernelTestBase {
+
+  /**
+   * {@inheritdoc}
+   *
+   * Disable strict config schema for this test class. The LanguageConfigOverride
+   * schema checker validates overrides by merging them with the base config at
+   * save time. updateComponentInstances() saves the reconciled override before
+   * the caller can persist the updated base config entity, so the checker would
+   * incorrectly flag deleted prop keys as unknown — those keys are valid in the
+   * base config until the caller saves the entity. In production, the schema
+   * checker is absent; this mirrors that environment.
+   */
+  protected $strictConfigSchema = FALSE;
+
+  use GenerateComponentConfigTrait;
+
+  protected static $modules = [
+    ...self::CANVAS_KERNEL_TEST_MINIMAL_MODULES,
+    'field',
+    'language',
+    // Makes PageRegion and ContentTemplate translatable (config schema +
+    // validation constraint). Required for LanguageConfigOverride saves to
+    // succeed schema validation in LanguageConfigOverrideSchemaChecker.
+    'canvas_dev_translation',
+  ];
+
+  private const string COMPONENT_UUID = '22222222-2222-4222-8222-222222222222';
+
+  private JavaScriptComponent $jsComponent;
+  private string $originalVersion;
+  private PageRegion $pageRegion;
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function setUp(): void {
+    parent::setUp();
+    $this->installConfig(['language']);
+    \Drupal::service('theme_installer')->install(['stark']);
+
+    ConfigurableLanguage::createFromLangcode('es')->save();
+
+    $this->jsComponent = JavaScriptComponent::create([
+      'machineName' => 'config_prop_propagation_test',
+      'name' => 'Config Prop Propagation Test',
+      'status' => TRUE,
+      'props' => [
+        'required_text' => [
+          'type' => 'string',
+          'title' => 'Required Text',
+          'examples' => ['Press'],
+        ],
+        'optional_text' => [
+          'type' => 'string',
+          'title' => 'Optional Text',
+          'examples' => ['Click me'],
+        ],
+      ],
+      'required' => ['required_text'],
+      'js' => [
+        'original' => 'console.log("test")',
+        'compiled' => 'console.log("test")',
+      ],
+      'css' => [
+        'original' => '.test { display: none; }',
+        'compiled' => '.test{display:none;}',
+      ],
+      'dataDependencies' => [],
+    ]);
+    self::assertSame(SAVED_NEW, $this->jsComponent->save());
+    $this->generateComponentConfig();
+
+    $component = \Drupal::entityTypeManager()->getStorage('component')->load('js.config_prop_propagation_test');
+    self::assertNotNull($component);
+    $this->originalVersion = $component->getActiveVersion();
+
+    $this->pageRegion = PageRegion::create([
+      'theme' => 'stark',
+      'region' => 'sidebar_first',
+      'component_tree' => [
+        [
+          'uuid' => self::COMPONENT_UUID,
+          'component_id' => 'js.config_prop_propagation_test',
+          'component_version' => $this->originalVersion,
+          'inputs' => [
+            'required_text' => 'Hello world',
+            'optional_text' => 'Optional EN',
+          ],
+        ],
+      ],
+    ]);
+    self::assertSame(SAVED_NEW, $this->pageRegion->save());
+  }
+
+  /**
+   * Writes a LanguageConfigOverride for the PageRegion's Spanish translation.
+   *
+   * Stores only the translatable subset: `required_text` (translatable string).
+   * The `optional_text` prop is also a translatable string, but the test setup
+   * here simulates a translator who only translated `required_text`.
+   */
+  private function writeSpanishOverride(array $inputs): void {
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    $override = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName());
+    \assert($override instanceof LanguageConfigOverride);
+    $override->set('component_tree', [
+      self::COMPONENT_UUID => [
+        'inputs' => $inputs,
+      ],
+    ]);
+    $override->save();
+  }
+
+  /**
+   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  #[DataProvider('providerPropagation')]
+  public function testPropagation(
+    string $setup_method,
+    bool $expected_modified,
+    ?string $new_key,
+    ?string $removed_key,
+    array $expected_remaining_override_inputs,
+  ): void {
+    // Write a Spanish override before the update.
+    $this->writeSpanishOverride([
+      'required_text' => 'Hola mundo',
+      'optional_text' => 'opcional ES',
+    ]);
+
+    $this->{$setup_method}();
+    $this->generateComponentConfig();
+
+    $tree = $this->pageRegion->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    $was_modified = $manager->updateComponentInstances($tree);
+    self::assertSame($expected_modified, $was_modified);
+
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    $override = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName());
+    \assert($override instanceof LanguageConfigOverride);
+
+    if (empty($expected_remaining_override_inputs)) {
+      // All translatable inputs were deleted: override should be gone entirely.
+      self::assertTrue($override->isNew(), 'Override must be deleted when no translatable inputs remain.');
+    }
+    else {
+      self::assertFalse($override->isNew(), 'Override must still exist.');
+      $stored = $override->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+      self::assertIsArray($stored);
+      if ($removed_key !== NULL) {
+        self::assertArrayNotHasKey($removed_key, $stored, "Deleted prop must be pruned from override.");
+      }
+      if ($new_key !== NULL) {
+        // New props are seeded on the base config (default translation), not
+        // in the LanguageConfigOverride, so they must NOT appear in the
+        // override.
+        self::assertArrayNotHasKey($new_key, $stored, "New props must not appear in config override (base config provides them).");
+      }
+      self::assertSame($expected_remaining_override_inputs, $stored);
+    }
+  }
+
+  public static function providerPropagation(): \Generator {
+    yield 'New optional prop added — override unchanged (new prop not in override)' => [
+      'setup_method' => 'addOptionalProp',
+      'expected_modified' => TRUE,
+      'new_key' => 'voice',
+      'removed_key' => NULL,
+      'expected_remaining_override_inputs' => [
+        'required_text' => 'Hola mundo',
+        'optional_text' => 'opcional ES',
+      ],
+    ];
+    yield 'New required prop added — override unchanged (new prop not in override)' => [
+      'setup_method' => 'addRequiredProp',
+      'expected_modified' => TRUE,
+      'new_key' => 'voice',
+      'removed_key' => NULL,
+      'expected_remaining_override_inputs' => [
+        'required_text' => 'Hola mundo',
+        'optional_text' => 'opcional ES',
+      ],
+    ];
+    yield 'Optional prop deleted — orphaned key pruned from override' => [
+      'setup_method' => 'removeOptionalProp',
+      'expected_modified' => TRUE,
+      'new_key' => NULL,
+      'removed_key' => 'optional_text',
+      'expected_remaining_override_inputs' => [
+        'required_text' => 'Hola mundo',
+      ],
+    ];
+    yield 'Unsafe prop type change — update blocked, override unchanged' => [
+      'setup_method' => 'changePropType',
+      'expected_modified' => FALSE,
+      'new_key' => NULL,
+      'removed_key' => NULL,
+      'expected_remaining_override_inputs' => [
+        'required_text' => 'Hola mundo',
+        'optional_text' => 'opcional ES',
+      ],
+    ];
+    yield 'Prop removed and another added — removed key pruned, new key absent from override' => [
+      'setup_method' => 'removeAndAddProp',
+      'expected_modified' => TRUE,
+      'new_key' => 'voice',
+      'removed_key' => 'optional_text',
+      'expected_remaining_override_inputs' => [
+        'required_text' => 'Hola mundo',
+      ],
+    ];
+    yield 'All translatable props deleted — override record deleted entirely' => [
+      'setup_method' => 'removeBothProps',
+      'expected_modified' => TRUE,
+      'new_key' => NULL,
+      'removed_key' => NULL,
+      'expected_remaining_override_inputs' => [],
+    ];
+  }
+
+  /**
+   * Tests that a translation with no prior override is skipped gracefully.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  public function testNoOverrideSkipped(): void {
+    // Do NOT write an override — the language exists but has no translation.
+    $this->addOptionalProp();
+    $this->generateComponentConfig();
+
+    $tree = $this->pageRegion->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    $was_modified = $manager->updateComponentInstances($tree);
+    self::assertTrue($was_modified);
+
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    $override = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName());
+    // No override existed before — reconciliation must not create one.
+    self::assertTrue($override->isNew(), 'No override should be created for a language with no prior translation.');
+  }
+
+  /**
+   * Tests that multiple language overrides are all reconciled on a single update.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  public function testMultipleLanguageOverridesReconciled(): void {
+    ConfigurableLanguage::createFromLangcode('fr')->save();
+
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+
+    $this->writeSpanishOverride(['required_text' => 'Hola mundo', 'optional_text' => 'opcional ES']);
+
+    $fr_override = $language_manager->getLanguageConfigOverride('fr', $this->pageRegion->getConfigDependencyName());
+    \assert($fr_override instanceof LanguageConfigOverride);
+    $fr_override->set('component_tree', [
+      self::COMPONENT_UUID => [
+        'inputs' => ['required_text' => 'Bonjour monde', 'optional_text' => 'optionnel FR'],
+      ],
+    ]);
+    $fr_override->save();
+
+    // Remove optional_text.
+    $this->removeOptionalProp();
+    $this->generateComponentConfig();
+
+    $tree = $this->pageRegion->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    $was_modified = $manager->updateComponentInstances($tree);
+    self::assertTrue($was_modified);
+
+    $es_stored = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName())
+      ->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+    self::assertSame(['required_text' => 'Hola mundo'], $es_stored);
+
+    $fr_stored = $language_manager->getLanguageConfigOverride('fr', $this->pageRegion->getConfigDependencyName())
+      ->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+    self::assertSame(['required_text' => 'Bonjour monde'], $fr_stored);
+  }
+
+  protected function addOptionalProp(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
+    $this->jsComponent->setProps($props)->save();
+  }
+
+  protected function addRequiredProp(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
+    $required = $this->jsComponent->getRequiredProps();
+    $required[] = 'voice';
+    $this->jsComponent->setProps($props)->set('required', $required)->save();
+  }
+
+  protected function removeOptionalProp(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    unset($props['optional_text']);
+    $this->jsComponent->setProps($props)->save();
+  }
+
+  protected function changePropType(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    $props['required_text'] = ['type' => 'integer', 'title' => 'Required Int', 'examples' => [42]];
+    $this->jsComponent->setProps($props)->save();
+  }
+
+  protected function removeAndAddProp(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    unset($props['optional_text']);
+    $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
+    $this->jsComponent->setProps($props)->save();
+  }
+
+  protected function removeBothProps(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    unset($props['required_text'], $props['optional_text']);
+    $props['count'] = ['type' => 'integer', 'title' => 'Count', 'examples' => [3]];
+    $required = [];
+    $this->jsComponent->setProps($props)->set('required', $required)->save();
+  }
+
+}
