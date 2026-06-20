@@ -7,12 +7,9 @@ namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 // cspell:ignore mundo Opcional Hola
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
-use Drupal\canvas\Entity\JavaScriptComponent;
 use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\language\Entity\ConfigurableLanguage;
-use Drupal\Tests\canvas\Kernel\CanvasKernelTestBase;
-use Drupal\Tests\canvas\Traits\GenerateComponentConfigTrait;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
@@ -31,21 +28,21 @@ use PHPUnit\Framework\Attributes\Group;
 #[Group('canvas_component_sources')]
 #[Group('canvas_data_model')]
 #[Group('canvas_translation')]
-final class ContentEntityTranslationPropagationTest extends CanvasKernelTestBase {
-
-  use GenerateComponentConfigTrait;
+final class ContentEntityTranslationPropagationTest extends TranslationPropagationTestBase {
 
   protected static $modules = [
-    ...self::CANVAS_KERNEL_TEST_MINIMAL_MODULES,
-    'field',
-    'language',
+    ...parent::BASE_MODULES,
     'content_translation',
   ];
 
   private const string COMPONENT_UUID = '11111111-1111-4111-8111-111111111111';
 
-  private JavaScriptComponent $jsComponent;
-  private string $originalVersion;
+  /**
+   * {@inheritdoc}
+   */
+  protected static function componentMachineName(): string {
+    return 'prop_propagation_test';
+  }
 
   /**
    * {@inheritdoc}
@@ -55,43 +52,6 @@ final class ContentEntityTranslationPropagationTest extends CanvasKernelTestBase
     $this->installEntitySchema('user');
     $this->installEntitySchema('path_alias');
     $this->installEntitySchema(Page::ENTITY_TYPE_ID);
-    $this->installConfig(['language']);
-
-    ConfigurableLanguage::createFromLangcode('es')->save();
-
-    $this->jsComponent = JavaScriptComponent::create([
-      'machineName' => 'prop_propagation_test',
-      'name' => 'Prop Propagation Test',
-      'status' => TRUE,
-      'props' => [
-        'required_text' => [
-          'type' => 'string',
-          'title' => 'Required Text',
-          'examples' => ['Press'],
-        ],
-        'optional_text' => [
-          'type' => 'string',
-          'title' => 'Optional Text',
-          'examples' => ['Click me'],
-        ],
-      ],
-      'required' => ['required_text'],
-      'js' => [
-        'original' => 'console.log("test")',
-        'compiled' => 'console.log("test")',
-      ],
-      'css' => [
-        'original' => '.test { display: none; }',
-        'compiled' => '.test{display:none;}',
-      ],
-      'dataDependencies' => [],
-    ]);
-    self::assertSame(SAVED_NEW, $this->jsComponent->save());
-    $this->generateComponentConfig();
-
-    $component = \Drupal::entityTypeManager()->getStorage('component')->load('js.prop_propagation_test');
-    self::assertNotNull($component);
-    $this->originalVersion = $component->getActiveVersion();
   }
 
   /**
@@ -280,46 +240,6 @@ final class ContentEntityTranslationPropagationTest extends CanvasKernelTestBase
 
     $this->expectException(\InvalidArgumentException::class);
     $en_item->reconcileWithUpdatedDefaultTranslation([], [], $this->originalVersion);
-  }
-
-  protected function addOptionalProp(): void {
-    $props = $this->jsComponent->getProps();
-    \assert($props !== NULL);
-    $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
-    $this->jsComponent->setProps($props)->save();
-  }
-
-  protected function addRequiredProp(): void {
-    $props = $this->jsComponent->getProps();
-    \assert($props !== NULL);
-    $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
-    $required = $this->jsComponent->getRequiredProps();
-    $required[] = 'voice';
-    $this->jsComponent->setProps($props)->set('required', $required)->save();
-  }
-
-  protected function removeOptionalProp(): void {
-    $props = $this->jsComponent->getProps();
-    \assert($props !== NULL);
-    unset($props['optional_text']);
-    $this->jsComponent->setProps($props)->save();
-  }
-
-  protected function changePropType(): void {
-    $props = $this->jsComponent->getProps();
-    \assert($props !== NULL);
-    // Change required_text from string to integer — an unsafe change that
-    // blocks the update for all translations.
-    $props['required_text'] = ['type' => 'integer', 'title' => 'Required Int', 'examples' => [42]];
-    $this->jsComponent->setProps($props)->save();
-  }
-
-  protected function removeAndAddProp(): void {
-    $props = $this->jsComponent->getProps();
-    \assert($props !== NULL);
-    unset($props['optional_text']);
-    $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
-    $this->jsComponent->setProps($props)->save();
   }
 
 }
