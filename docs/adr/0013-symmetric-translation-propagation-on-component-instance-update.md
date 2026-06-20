@@ -70,16 +70,16 @@ For each component instance that was updated in the default translation, every n
 
 Whether an input key is translatable is determined by the same schema-driven mechanism established in ADR #10 — the `inputs` field property's method for enumerating translatable keys. There is no separate or parallel classification for the update propagation path.
 
-### 5. Config entity translations are reconciled via in-memory staged overrides
+### 5. Config entity translations are reconciled via staged override config entities
 
-For config entities, where non-default translations are stored as sparse `LanguageConfigOverride` records containing only translatable overrides, propagation stages mutations in memory rather than writing to storage immediately:
+For config entities, where non-default translations are stored as sparse `LanguageConfigOverride` records containing only translatable overrides, propagation stages mutations in memory rather than writing to storage immediately. Staged overrides are represented as `StagedLanguageConfigOverride` config entities — the same auto-save pattern used by `StagedConfigUpdate` — so they participate in the review-and-publish workflow alongside other staged changes:
 
 - Orphaned keys (props deleted in the new version) are pruned from the in-memory staged override.
 - The version identifier is structural metadata in the base config, not in the override, so it is already correct after the default-translation update.
 - New props do not appear in the override at all (their value comes from the base config), so no action is needed.
 - Non-translatable props do not appear in the override either (by definition, only translatable overrides are stored), so there is nothing to reconcile for them.
 
-If pruning leaves a component instance's override entry empty, the entry is removed from the staged override entirely. The caller is responsible for persisting staged overrides to storage (or staging them for auto-save) when it chooses to do so — mirroring the content entity pattern where reconciliation is in-memory only.
+If pruning leaves a component instance's override entry empty, the entry is removed from the staged override entirely. The caller is responsible for persisting staged override entities to auto-save storage when it chooses to do so — mirroring the content entity pattern where reconciliation is in-memory only. Publishing a staged override writes it as a real `LanguageConfigOverride`; if the data is empty, the override record is deleted instead.
 
 ### 6. Reconciliation is guarded against being applied to the default translation
 

@@ -132,11 +132,11 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
 
     if (empty($expected_remaining_override_inputs)) {
       // All translatable inputs were deleted: staged override should be empty.
-      self::assertTrue($staged->isNew(), 'Staged override must be empty when no translatable inputs remain.');
+      self::assertTrue($staged->isEmpty(), 'Staged override must be empty when no translatable inputs remain.');
     }
     else {
-      self::assertFalse($staged->isNew(), 'Staged override must still have data.');
-      $stored = $staged->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+      self::assertFalse($staged->isEmpty(), 'Staged override must still have data.');
+      $stored = $staged->getData('component_tree.' . self::COMPONENT_UUID . '.inputs');
       self::assertIsArray($stored);
       if ($removed_key !== NULL) {
         self::assertArrayNotHasKey($removed_key, $stored, "Deleted prop must be pruned from staged override.");
@@ -226,7 +226,7 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
     self::assertTrue($was_modified);
 
     // No override existed before — reconciliation must not populate a staged one.
-    self::assertTrue($this->pageRegion->getTranslation('es')->isNew(), 'No staged override should be created for a language with no prior translation.');
+    self::assertTrue($this->pageRegion->getTranslation('es')->isEmpty(), 'No staged override should be created for a language with no prior translation.');
   }
 
   /**
@@ -262,11 +262,11 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
 
     // Both staged overrides should have optional_text pruned in-memory.
     $es_stored = $this->pageRegion->getTranslation('es')
-      ->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+      ->getData('component_tree.' . self::COMPONENT_UUID . '.inputs');
     self::assertSame(['required_text' => 'Hola mundo'], $es_stored);
 
     $fr_stored = $this->pageRegion->getTranslation('fr')
-      ->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+      ->getData('component_tree.' . self::COMPONENT_UUID . '.inputs');
     self::assertSame(['required_text' => 'Bonjour monde'], $fr_stored);
   }
 

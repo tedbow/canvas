@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Entity;
 
-use Drupal\canvas\Config\StagedLanguageConfigOverride;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemListInstantiatorTrait;
 use Drupal\Component\Serialization\Json;
 use Drupal\Core\Config\Entity\ConfigEntityBase;
@@ -39,7 +38,7 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * Populated lazily by getTranslation(). Repeated calls for the same langcode
    * return the same instance, so in-memory mutations survive across calls.
    *
-   * @var array<string, \Drupal\canvas\Config\StagedLanguageConfigOverride>
+   * @var array<string, \Drupal\canvas\Entity\StagedLanguageConfigOverride>
    */
   private array $stagedOverrides = [];
 
@@ -216,7 +215,7 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * Returns a staged in-memory language config override for the given langcode.
    *
    * Analogous to TranslatableInterface::getTranslation(), but returns a
-   * StagedLanguageConfigOverride rather than a translated entity object.
+   * StagedLanguageConfigOverride entity rather than a translated entity object.
    * The same instance is returned on repeated calls for the same langcode,
    * so in-memory mutations (e.g. from reconciliation) survive across calls.
    *

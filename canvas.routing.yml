@@ -56,7 +56,7 @@ canvas.api.config.auto-save.get:
     _entity_access: 'canvas_config_entity.update'
     # Allow a subset: `Component` config entities are read-only via the internal HTTP API, `Pattern` config entities do
     # not (yet) support auto-save.
-    canvas_config_entity_type_id: '(js_component|asset_library|brand_kit|staged_config_update)'
+    canvas_config_entity_type_id: '(js_component|asset_library|brand_kit|staged_config_update|staged_language_config_override)'
   options:
     parameters:
       canvas_config_entity:

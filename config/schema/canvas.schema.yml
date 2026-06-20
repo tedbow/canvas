@@ -1082,6 +1082,37 @@ canvas.staged_config_update.*:
             constraints:
               NotBlank: [ ]
 
+canvas.staged_language_config_override.*:
+  type: config_entity
+  constraints:
+    FullyValidatable: ~
+  mapping:
+    id:
+      # The ID is "{langcode}.{config_name}", which contains dots.
+      type: string
+      label: 'ID'
+      constraints:
+        NotBlank: [ ]
+    langcode:
+      type: string
+      label: 'Language code'
+      constraints:
+        NotBlank: [ ]
+    config_name:
+      # We do not use `machine_name` since config entities have `.` in their IDs.
+      type: string
+      label: 'Config name'
+      constraints:
+        NotBlank: [ ]
+        Length:
+          # @see \Drupal\Core\Config\Entity\ConfigEntityStorage::MAX_ID_LENGTH
+          max: 166
+    data:
+      # The sparse override data has no fixed schema — it mirrors the structure
+      # of whatever config entity it targets.
+      type: ignore
+      label: 'Override data'
+
 canvas.folder.*:
   type: config_entity
   constraints:

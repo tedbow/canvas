@@ -679,7 +679,7 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
 
       $staged_dirty = FALSE;
       foreach ($updated as $uuid => $snapshot) {
-        $stored = $staged->get("component_tree.$uuid.inputs");
+        $stored = $staged->getData("component_tree.$uuid.inputs");
         if (!\is_array($stored) || empty($stored)) {
           continue;
         }
@@ -694,10 +694,10 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
         }
 
         if (empty($reconciled)) {
-          $staged->clear("component_tree.$uuid");
+          $staged->clearData("component_tree.$uuid");
         }
         else {
-          $staged->set("component_tree.$uuid.inputs", $reconciled);
+          $staged->setData("component_tree.$uuid.inputs", $reconciled);
         }
         $staged_dirty = TRUE;
       }
@@ -707,9 +707,9 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
       }
 
       // Prune empty component_tree entry left by clearing all UUIDs.
-      $component_tree_data = $staged->get('component_tree');
+      $component_tree_data = $staged->getData('component_tree');
       if (empty($component_tree_data)) {
-        $staged->clear('component_tree');
+        $staged->clearData('component_tree');
       }
     }
   }
