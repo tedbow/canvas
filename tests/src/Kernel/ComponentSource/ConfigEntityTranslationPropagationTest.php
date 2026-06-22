@@ -6,17 +6,21 @@ namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
 // cspell:ignore Hallo mundo Hola opcional optionnel
 
+use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\Controller\ApiAutoSaveController;
 use Drupal\canvas\Entity\PageRegion;
 use Drupal\canvas\Entity\StagedLanguageConfigOverride;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
-use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\language\Config\LanguageConfigOverride;
 use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\language\Entity\ConfigurableLanguage;
+use Drupal\Tests\user\Traits\UserCreationTrait;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Tests component instance version update propagation to config translations.
@@ -37,6 +41,8 @@ use PHPUnit\Framework\Attributes\Group;
 #[Group('canvas_data_model')]
 #[Group('canvas_translation')]
 final class ConfigEntityTranslationPropagationTest extends TranslationPropagationTestBase {
+
+  use UserCreationTrait;
 
   /**
    * {@inheritdoc}
@@ -64,6 +70,8 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
   protected function setUp(): void {
     parent::setUp();
     \Drupal::service('theme_installer')->install(['stark']);
+    $this->installEntitySchema('user');
+    $this->installEntitySchema('path_alias');
 
     $this->pageRegion = PageRegion::create([
       'theme' => 'stark',
@@ -274,25 +282,55 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
   }
 
   /**
-   * Runs updateComponentInstances() and publishes all dirty staged overrides.
+   * Runs updateComponentInstances() and publishes via the real auto-save path.
    *
-   * Exercises the full staged-override lifecycle: reconcile in memory →
-   * persist to auto-save storage → publish to live LanguageConfigOverride.
-   * Returns the staged override for the given langcode so callers can inspect
-   * the empty/non-empty state before publishing if needed.
+   * Exercises the full staged-override lifecycle: reconcile in memory → stage
+   * the entity and its translation overrides → publish all via
+   * ApiAutoSaveController::post(). The base entity is saved first (updating the
+   * live config), so the schema checker accepts the stripped translation
+   * override when it is published in the same request.
+   *
+   * Returns the in-memory staged override for the given langcode, so callers
+   * can inspect in-memory state before publish if needed.
    */
   private function updateAndPublishOverrides(string $assert_langcode = 'es'): StagedLanguageConfigOverride {
+    // Router must be built before UserCreationTrait::setUpCurrentUser() triggers
+    // FilterPermissions::permissions() → URL generation.
+    $this->container->get('router.builder')->rebuild();
+
+    // Set up a user with permission to publish auto-saves.
+    $this->setUpCurrentUser([], [
+      PageRegion::ADMIN_PERMISSION,
+      AutoSaveManager::PUBLISH_PERMISSION,
+    ]);
+
     $tree = $this->pageRegion->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
     \assert($manager instanceof ComponentSourceManager);
     $manager->updateComponentInstances($tree);
 
+    // Stage the updated base entity.
+    $auto_save_manager = $this->container->get(AutoSaveManager::class);
+    \assert($auto_save_manager instanceof AutoSaveManager);
+    $this->pageRegion->setComponentTree($tree->getValue());
+    $auto_save_manager->saveEntity($this->pageRegion);
+
+    // Stage the translation override (even if empty: publish() will then delete
+    // the live LanguageConfigOverride).
     $staged = $this->pageRegion->getTranslation($assert_langcode);
-    $storage = $this->container->get('entity_type.manager')
-      ->getStorage(StagedLanguageConfigOverride::ENTITY_TYPE_ID);
-    \assert($storage instanceof EntityStorageInterface);
-    $staged->autoSavePublish();
-    $storage->save($staged);
+    $auto_save_manager->saveEntity($staged);
+
+    // Publish everything through the real auto-save publish controller.
+    $payload = [];
+    foreach ($auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE) as $key => $info) {
+      $payload[$key] = ['data_hash' => $info['data_hash']];
+    }
+    $request = Request::create('/canvas/api/v0/auto-saves/publish', 'POST', content: (string) \json_encode($payload));
+    $controller = \Drupal::classResolver(ApiAutoSaveController::class);
+    \assert($controller instanceof ApiAutoSaveController);
+    $response = $controller->post($request);
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+
     return $staged;
   }
 

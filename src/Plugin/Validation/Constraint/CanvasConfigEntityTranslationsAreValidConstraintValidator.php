@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Plugin\Validation\Constraint;
 
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\Component\Utility\NestedArray;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\Entity\ConfigEntityInterface;
@@ -58,11 +59,30 @@ final class CanvasConfigEntityTranslationsAreValidConstraintValidator extends Co
 
     $name = $value->getConfigDependencyName();
     $base_data = $this->configFactory->get($name)->getRawData();
+    $default_langcode = $this->languageManager->getDefaultLanguage()->getId();
     $languages = $this->languageManager->getLanguages();
 
     foreach ($languages as $langcode => $language) {
-      $override = $this->languageManager->getLanguageConfigOverride($langcode, $name);
-      $override_data = $override->get();
+      if ($langcode === $default_langcode) {
+        continue;
+      }
+
+      // For ComponentTreeConfigEntityBase, getTranslation() always creates a
+      // new in-memory StagedLanguageConfigOverride (isNew() === TRUE), except
+      // when AutoSaveManager coalesced a staged override into the entity — in
+      // that case enforceIsNew(FALSE) was called. Skip those: they will be
+      // validated by LanguageConfigOverrideSchemaChecker when published.
+      if ($value instanceof ComponentTreeConfigEntityBase) {
+        $translation = $value->getTranslation($langcode);
+        if (!$translation->isNew()) {
+          continue;
+        }
+        $override_data = $translation->getData();
+      }
+      else {
+        $override = $this->languageManager->getLanguageConfigOverride($langcode, $name);
+        $override_data = $override->get();
+      }
       if (empty($override_data)) {
         continue;
       }

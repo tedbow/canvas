@@ -109,6 +109,19 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
   }
 
   /**
+   * {@inheritdoc}
+   *
+   * Returns FALSE when this instance was loaded from auto-save storage by
+   * AutoSaveManager. Used by
+   * CanvasConfigEntityTranslationsAreValidConstraintValidator to skip
+   * validation for overrides that will be validated by
+   * LanguageConfigOverrideSchemaChecker when published in the same request.
+   */
+  public function isNew(): bool {
+    return parent::isNew();
+  }
+
+  /**
    * Returns whether this staged override has no data.
    *
    * Distinct from ConfigEntityBase::isNew() (which indicates whether the entity

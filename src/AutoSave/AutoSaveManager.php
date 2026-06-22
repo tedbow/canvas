@@ -8,6 +8,7 @@ use Drupal\canvas\AutoSaveEntity;
 use Drupal\canvas\Controller\ApiContentControllers;
 use Drupal\canvas\Entity\BrandKit;
 use Drupal\canvas\Entity\CanvasHttpApiEligibleConfigEntityInterface;
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\Entity\Page;
@@ -34,9 +35,11 @@ use Drupal\Core\Field\FieldItemInterface;
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Core\KeyValueStore\KeyValueFactoryInterface;
 use Drupal\Core\KeyValueStore\KeyValueStoreInterface;
+use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Session\AccountProxyInterface;
 use Drupal\Core\TypedData\PrimitiveInterface;
 use Drupal\Core\TypedData\TypedDataInterface;
+use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\path\Plugin\Field\FieldType\PathFieldItemList;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -103,6 +106,8 @@ class AutoSaveManager implements EventSubscriberInterface {
     KeyValueFactoryInterface $keyValueFactory,
     private readonly AccountProxyInterface $currentUser,
     private readonly TimeInterface $time,
+    #[Autowire(service: LanguageManagerInterface::class)]
+    private readonly LanguageManagerInterface $languageManager,
   ) {
     $this->autoSaveStore = $keyValueFactory->get(self::AUTO_SAVE_STORE);
     $this->formViolationsStore = $keyValueFactory->get(self::FORM_VIOLATIONS_STORE);
@@ -390,11 +395,65 @@ class AutoSaveManager implements EventSubscriberInterface {
     // it to avoid possible issues where someone accidentally calls ::save on
     // the entity. Calling code that needs to reflect the fact that the entity
     // is not new should call ::enforceIsNew as required.
-    $auto_save_entity = new AutoSaveEntity($this->entityTypeManager->getStorage($auto_save_data['entity_type'])->create($auto_save_data['data']), $auto_save_data['data_hash'], $auto_save_data['client_id']);
+    $reconstructed = $this->entityTypeManager->getStorage($auto_save_data['entity_type'])->create($auto_save_data['data']);
+    $this->injectStagedLanguageConfigOverrides($reconstructed);
+    $auto_save_entity = new AutoSaveEntity($reconstructed, $auto_save_data['data_hash'], $auto_save_data['client_id']);
     // Store in static cache to avoid the overhead of calling Entity::create
     // multiple times during layout preview rendering.
     $this->cache->set($key, $auto_save_entity, tags: [self::CACHE_TAG]);
     return $auto_save_entity;
+  }
+
+  /**
+   * Creates an entity from a raw auto-save store entry, with SLCOs injected.
+   *
+   * @param array<string, mixed> $entry
+   */
+  private function createEntityFromAutoSaveEntry(array $entry): EntityInterface {
+    \assert(\is_string($entry['entity_type']));
+    \assert(\is_array($entry['data']));
+    $entity = $this->entityTypeManager->getStorage($entry['entity_type'])->create($entry['data'])->enforceIsNew(FALSE);
+    $this->injectStagedLanguageConfigOverrides($entity);
+    return $entity;
+  }
+
+  /**
+   * Sets the staged config translations on a ComponentTreeConfigEntityBase.
+   *
+   * For each language that has a StagedLanguageConfigOverride in the auto-save
+   * store, the corresponding translation is loaded via getTranslation() (which
+   * caches the object in the entity) and then mutated in place: its data is
+   * replaced with the auto-save data and enforceIsNew(FALSE) is called. This
+   * ensures getTranslation() returns the staged state rather than the live
+   * config, and that isNew() returns FALSE so the constraint validator can
+   * identify staged overrides and skip re-validation.
+   *
+   * @todo Expand to content entities when Canvas supports content entity
+   *   translation auto-saves (no @todo exists yet, but the architecture is
+   *   already designed with this in mind via ComponentTreeConfigEntityBase).
+   */
+  private function injectStagedLanguageConfigOverrides(EntityInterface $entity): void {
+    if (!$entity instanceof ComponentTreeConfigEntityBase) {
+      return;
+    }
+    if (!$this->languageManager instanceof ConfigurableLanguageManagerInterface) {
+      return;
+    }
+    $default_langcode = $this->languageManager->getDefaultLanguage()->getId();
+    $config_name = $entity->getConfigDependencyName();
+    foreach ($this->languageManager->getLanguages() as $langcode => $language) {
+      if ($langcode === $default_langcode) {
+        continue;
+      }
+      $slco_key = 'staged_language_config_override:' . $langcode . '.' . $config_name;
+      $slco_data = $this->autoSaveStore->get($slco_key);
+      if ($slco_data !== NULL) {
+        \assert(\is_array($slco_data['data']));
+        $translation = $entity->getTranslation($langcode);
+        $translation->enforceIsNew(FALSE);
+        $translation->set('data', $slco_data['data']);
+      }
+    }
   }
 
   /**
@@ -422,7 +481,7 @@ class AutoSaveManager implements EventSubscriberInterface {
     [
       // Remove the unique session key for anonymous users.
       'owner' => \is_numeric($entry['owner']) ? (int) $entry['owner'] : 0,
-      'entity' => $with_entities ? $this->entityTypeManager->getStorage($entry['entity_type'])->create($entry['data'])->enforceIsNew(FALSE) : NULL,
+      'entity' => $with_entities ? $this->createEntityFromAutoSaveEntry($entry) : NULL,
     ], $entries);
 
     if ($with_conflicts) {
