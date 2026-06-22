@@ -660,12 +660,13 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
    *
    * Config entity translations store only the translatable subset of inputs in
    * LanguageConfigOverride records. This method adjusts each translation's
-   * staged override (loaded in-memory via ComponentTreeConfigEntityBase::
-   * getTranslation()) to match the new component version by removing inputs
-   * for deleted props. The base config provides values for any new props, so
-   * no action is needed for new keys.
+   * staged LanguageConfigOverride (loaded in-memory via
+   * ComponentTreeConfigEntityBase::getTranslation()) to match the new component
+   * version by removing inputs for deleted props. The base config provides
+   * values for any new props, so no action is needed for new keys.
    *
-   * Mutations are kept in-memory on the entity via StagedLanguageConfigOverride.
+   * Mutations are kept in-memory on the config entity via
+   * StagedLanguageConfigOverride objects.
    * The caller is responsible for persisting the staged overrides when needed.
    *
    * @param \Drupal\canvas\Entity\ComponentTreeConfigEntityBase $entity

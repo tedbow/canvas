@@ -276,8 +276,9 @@ final class ComponentSourceManager extends DefaultPluginManager {
    */
   public function updateComponentInstances(ComponentTreeItemList $component_tree): bool {
     $wasModified = FALSE;
-    // Keyed by UUID: snapshot of inputs/version before the update, and
-    // inputs/version after, so translations can be reconciled afterwards.
+    // Keyed by component instance UUID: snapshot of inputs/version before the
+    // update, and inputs/version after, so symmetric translations can be
+    // reconciled afterwards.
     $updated_snapshots = [];
 
     foreach ($component_tree as $item) {
@@ -304,12 +305,13 @@ final class ComponentSourceManager extends DefaultPluginManager {
         // After the update, load the target source to get all prop defaults.
         // This is needed so translations receive values for new optional props
         // even though the updater only injects defaults for required ones.
-        $target_source = $item->getComponent()?->getComponentSource();
         $updated_snapshots[$uuid] = [
           'inputs_before' => $inputs_before,
           'inputs_after' => $item->getInputs() ?? [],
           'version_after' => $item->getComponentVersion(),
-          'default_explicit_input' => $target_source?->getDefaultExplicitInput() ?? [],
+          'default_explicit_input' => $item->getComponent()
+          ?->getComponentSource()
+          ?->getDefaultExplicitInput() ?? [],
         ];
       }
     }

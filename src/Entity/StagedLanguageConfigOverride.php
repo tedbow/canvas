@@ -16,9 +16,9 @@ use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\language\Config\LanguageConfigOverride;
 
 /**
- * A staged (auto-save) language configuration override.
+ * A staged LanguageConfigOverride (language configuration override).
  *
- * Stores an in-memory language config override that has not yet been applied
+ * Stores a language config override that has not yet been applied
  * to the live LanguageConfigOverride record. Lives in auto-save storage until
  * explicitly published, at which point it is written as a real override.
  *
@@ -106,9 +106,6 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
 
   /**
    * Creates a staged override from an existing live LanguageConfigOverride.
-   *
-   * Copies the stored data in-memory so that reconciliation does not touch the
-   * live override record until the caller explicitly publishes the staged state.
    */
   public static function fromLanguageConfigOverride(LanguageConfigOverride $stored_override): self {
     $langcode = $stored_override->getLangcode();
@@ -224,10 +221,9 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
 
   /**
    * {@inheritdoc}
-   *
-   * @see \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage::save()
    */
   public function autoSavePublish(): self {
+    // @see \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage::save()
     $this->setStatus(TRUE);
     return $this;
   }

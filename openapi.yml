@@ -4415,8 +4415,10 @@ components:
               input:
                 type: object
                 description: The action input.
+    # @see \Drupal\canvas\Entity\StagedLanguageConfigOverride
+    # @see \Drupal\language\Config\LanguageConfigOverride
     StagedLanguageConfigOverride:
-      title: Staged Language Config Override
+      title: Staged LanguageConfigOverride
       type: object
       additionalProperties: false
       required:
@@ -4427,17 +4429,17 @@ components:
       properties:
         id:
           type: string
-          description: The staged language config override ID ("{langcode}.{config_name}").
+          description: The staged LanguageConfigOverride ID ("{langcode}.{config_name}").
           example: 'es.canvas.page_region.stark.sidebar_first'
         langcode:
           type: string
-          description: The language code of this override.
+          description: The language code of this staged LanguageConfigOverride.
         config_name:
           type: string
-          description: The config name this override targets.
+          description: The config name this staged LanguageConfigOverride targets.
         data:
           type: object
-          description: The sparse override data (only translatable keys).
+          description: The sparse override data (only translatable keys, and only those with actual override values).
     ContentTemplateList:
       title: List of Content templates grouped by entity type, bundles and view modes.
       type: object
