@@ -506,6 +506,14 @@ final class ApiAutoSaveController extends ApiControllerBase {
    * columns (e.g. component_version) are written once for every translation, so
    * each translation's translatable inputs must be applied in the same save.
    *
+   * This runs at publish time in the controller rather than at reconstruction
+   * time in AutoSaveManager because it calls loadUnchanged() and applies
+   * field-level changes onto the stored entity — an inherently publish-specific
+   * operation. Contrast with config entities, where coalescing is
+   * non-destructive and therefore happens in AutoSaveManager at reconstruction
+   * time (AutoSaveManager::injectStagedLanguageConfigOverrides()), making the
+   * coalesced state available to every caller, not only publishing.
+   *
    * @param \Drupal\Core\Entity\ContentEntityInterface[] $snapshots
    *   Auto-save snapshots for the same entity, one per edited translation.
    *

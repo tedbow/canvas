@@ -419,7 +419,7 @@ class AutoSaveManager implements EventSubscriberInterface {
   }
 
   /**
-   * Sets the staged config translations on a ComponentTreeConfigEntityBase.
+   * Coalesces staged config translations into a ComponentTreeConfigEntityBase.
    *
    * For each language that has a StagedLanguageConfigOverride in the auto-save
    * store, the corresponding translation is loaded via getTranslation() (which
@@ -428,6 +428,17 @@ class AutoSaveManager implements EventSubscriberInterface {
    * ensures getTranslation() returns the staged state rather than the live
    * config, and that isNew() returns FALSE so the constraint validator can
    * identify staged overrides and skip re-validation.
+   *
+   * This coalescing happens here in AutoSaveManager (i.e. at entity
+   * reconstruction time) rather than in ApiAutoSaveController::post() (i.e. at
+   * publish time) because it is non-destructive and safe to apply for any
+   * caller — not only publishing. Every consumer of getAutoSaveEntity() /
+   * getAllAutoSaveList() benefits from seeing a config entity with its staged
+   * translations already coalesced: preview, validation, conflict detection,
+   * and publishing all work correctly without having to call a separate
+   * coalescing step. Contrast with content entities, where coalescing requires
+   * loadUnchanged() to merge field-level changes, which is an inherently
+   * publish-specific operation that cannot happen at reconstruction time.
    *
    * @todo Expand to content entities when Canvas supports content entity
    *   translation auto-saves (no @todo exists yet, but the architecture is
@@ -518,8 +529,17 @@ class AutoSaveManager implements EventSubscriberInterface {
    * A single content entity may have multiple auto-save entries when several
    * translations were edited independently. Each entry holds a snapshot for one
    * translation. This method collects all snapshots for the same entity into a
-   * group so they can be applied together in a single save, preventing later
-   * snapshots from clobbering translations written by earlier ones.
+   * group so they can be passed to
+   * ApiAutoSaveController::applyAutoSaveTranslationSnapshots(), which applies
+   * them all onto one loaded copy in a single save.
+   *
+   * Content entity coalescing lives here rather than in getAutoSaveEntity() /
+   * getAllAutoSaveList() because it requires loadUnchanged() to merge
+   * field-level changes onto the stored entity — a publish-specific operation
+   * that must not run at reconstruction time. This method therefore only groups
+   * the raw snapshots; the actual merge happens in the controller at publish
+   * time. Contrast with config entities, where coalescing is non-destructive
+   * and happens at reconstruction time inside injectStagedLanguageConfigOverrides().
    *
    * @param array<string, array{data: array, owner: int, updated: int, entity_type: string, entity_id: string|int, label: string, original_hash: string, data_hash: string, client_id: ?string, langcode: ?string, entity: ?EntityInterface}> $auto_saves
    *   A subset of the getAllAutoSaveList() result, already filtered to the
