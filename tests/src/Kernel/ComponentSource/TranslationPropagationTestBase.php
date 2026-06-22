@@ -24,23 +24,16 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   use GenerateComponentConfigTrait;
 
   /**
-   * Modules required by both config and content entity propagation tests.
-   *
-   * Subclasses spread this constant and add their own modules:
-   * @code
-   *   protected static $modules = [
-   *     ...parent::BASE_MODULES,
-   *     'my_extra_module',
-   *   ];
-   * @endcode
+   * {@inheritdoc}
    */
-  protected const array BASE_MODULES = [
-    ...self::CANVAS_KERNEL_TEST_MINIMAL_MODULES,
+  protected static $modules = [
     'field',
     'language',
+    // - Content-defined component trees: validates symmetrically translations
+    // - Config-defined component trees: makes PageRegion and ContentTemplate
+    //   config entities translatable
+    'canvas_dev_translation',
   ];
-
-  protected static $modules = self::BASE_MODULES;
 
   protected JavaScriptComponent $jsComponent;
   protected string $originalVersion;

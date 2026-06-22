@@ -30,8 +30,10 @@ use PHPUnit\Framework\Attributes\Group;
 #[Group('canvas_translation')]
 final class ContentEntityTranslationPropagationTest extends TranslationPropagationTestBase {
 
+  /**
+   * {@inheritdoc}
+   */
   protected static $modules = [
-    ...parent::BASE_MODULES,
     'content_translation',
   ];
 

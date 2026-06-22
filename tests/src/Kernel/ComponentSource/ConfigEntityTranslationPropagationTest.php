@@ -36,12 +36,13 @@ use PHPUnit\Framework\Attributes\Group;
 #[Group('canvas_translation')]
 final class ConfigEntityTranslationPropagationTest extends TranslationPropagationTestBase {
 
+  /**
+   * {@inheritdoc}
+   */
   protected static $modules = [
-    ...parent::BASE_MODULES,
-    // Makes PageRegion and ContentTemplate translatable (config schema +
-    // validation constraint). Required for LanguageConfigOverride saves to
-    // succeed schema validation in LanguageConfigOverrideSchemaChecker.
-    'canvas_dev_translation',
+    // TRICKY: no extra modules are needed: Drupal core provides the no-UI
+    // translation infrastructure in the `language` module.
+    // @see \Drupal\language\Config\LanguageConfigFactoryOverride
   ];
 
   private const string COMPONENT_UUID = '22222222-2222-4222-8222-222222222222';
