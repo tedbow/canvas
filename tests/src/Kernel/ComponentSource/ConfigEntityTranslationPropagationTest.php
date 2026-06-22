@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
-// cspell:ignore Hallo mundo Hola opcional
+// cspell:ignore Hallo mundo Hola opcional optionnel
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\PageRegion;
