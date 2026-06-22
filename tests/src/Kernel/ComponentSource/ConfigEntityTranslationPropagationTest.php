@@ -8,7 +8,9 @@ namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\PageRegion;
+use Drupal\canvas\Entity\StagedLanguageConfigOverride;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
+use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\language\Config\LanguageConfigOverride;
 use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\language\Entity\ConfigurableLanguage;
@@ -269,6 +271,130 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
     $fr_stored = $this->pageRegion->getTranslation('fr')
       ->getData('component_tree.' . self::COMPONENT_UUID . '.inputs');
     self::assertSame(['required_text' => 'Bonjour monde'], $fr_stored);
+  }
+
+  /**
+   * Runs updateComponentInstances() and publishes all dirty staged overrides.
+   *
+   * Exercises the full staged-override lifecycle: reconcile in memory →
+   * persist to auto-save storage → publish to live LanguageConfigOverride.
+   * Returns the staged override for the given langcode so callers can inspect
+   * the empty/non-empty state before publishing if needed.
+   */
+  private function updateAndPublishOverrides(string $assert_langcode = 'es'): StagedLanguageConfigOverride {
+    $tree = $this->pageRegion->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    $manager->updateComponentInstances($tree);
+
+    $staged = $this->pageRegion->getTranslation($assert_langcode);
+    $storage = $this->container->get('entity_type.manager')
+      ->getStorage(StagedLanguageConfigOverride::ENTITY_TYPE_ID);
+    \assert($storage instanceof EntityStorageInterface);
+    $staged->autoSavePublish();
+    $storage->save($staged);
+    return $staged;
+  }
+
+  /**
+   * Tests that publishing a staged override writes it to the live LanguageConfigOverride.
+   *
+   * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
+   */
+  public function testPublishWritesToLiveOverride(): void {
+    $this->writeSpanishOverride([
+      'required_text' => 'Hola mundo',
+      'optional_text' => 'opcional ES',
+    ]);
+
+    $this->removeOptionalProp();
+    $this->generateComponentConfig();
+
+    $this->updateAndPublishOverrides();
+
+    // After publish, the live LanguageConfigOverride must have optional_text
+    // removed and required_text preserved.
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    $live = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName());
+    \assert($live instanceof LanguageConfigOverride);
+    self::assertFalse($live->isNew(), 'Live override must still exist after partial reconciliation.');
+    $inputs = $live->get('component_tree.' . self::COMPONENT_UUID . '.inputs');
+    self::assertIsArray($inputs);
+    self::assertArrayNotHasKey('optional_text', $inputs, 'Deleted prop must be removed from live override on publish.');
+    self::assertSame('Hola mundo', $inputs['required_text']);
+  }
+
+  /**
+   * Tests that publishing a staged override deletes the live record when empty.
+   *
+   * When reconciliation removes all translated inputs (all props deleted from
+   * the base component), the resulting staged override is empty. Publishing it
+   * must delete the live LanguageConfigOverride rather than writing empty data.
+   *
+   * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
+   */
+  public function testPublishDeletesEmptyOverride(): void {
+    // Write an override that only has the two props that will both be deleted.
+    $this->writeSpanishOverride([
+      'required_text' => 'Hola mundo',
+      'optional_text' => 'opcional ES',
+    ]);
+
+    $this->removeBothProps();
+    $this->generateComponentConfig();
+
+    $staged = $this->updateAndPublishOverrides();
+    self::assertTrue($staged->isEmpty(), 'Staged override must be empty after both props deleted.');
+
+    // Live LanguageConfigOverride must be deleted when the staged override is empty.
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    $live = $language_manager->getLanguageConfigOverride('es', $this->pageRegion->getConfigDependencyName());
+    \assert($live instanceof LanguageConfigOverride);
+    self::assertTrue($live->isNew(), 'Live override must be deleted when staged override is empty.');
+    self::assertSame([], $live->getRawData());
+  }
+
+  /**
+   * Tests that non-translatable (enum) props are not leaked into the staged override.
+   *
+   * Config entity translations store only the translatable subset of inputs.
+   * Enum-typed props are not translatable, so a new enum prop added to the base
+   * component must not appear in the staged override after reconciliation.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  public function testNonTranslatablePropNotStaged(): void {
+    $this->writeSpanishOverride([
+      'required_text' => 'Hola mundo',
+      'optional_text' => 'opcional ES',
+    ]);
+
+    // Add a new enum (non-translatable) optional prop.
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    $props['alignment'] = [
+      'type' => 'string',
+      'title' => 'Alignment',
+      'enum' => ['left', 'right'],
+      'examples' => ['left'],
+    ];
+    $this->jsComponent->setProps($props)->save();
+    $this->generateComponentConfig();
+
+    $tree = $this->pageRegion->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    $manager->updateComponentInstances($tree);
+
+    $staged = $this->pageRegion->getTranslation('es');
+    $inputs = $staged->getData('component_tree.' . self::COMPONENT_UUID . '.inputs');
+    self::assertIsArray($inputs);
+    self::assertArrayNotHasKey('alignment', $inputs, 'Non-translatable enum prop must not appear in staged override.');
+    // Existing translatable values are preserved.
+    self::assertSame('Hola mundo', $inputs['required_text']);
+    self::assertSame('opcional ES', $inputs['optional_text']);
   }
 
   protected function removeBothProps(): void {
