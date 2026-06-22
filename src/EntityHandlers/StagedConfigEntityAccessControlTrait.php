@@ -28,7 +28,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 trait StagedConfigEntityAccessControlTrait {
 
   /**
-   * Maps config prefixes (e.g. "node.type") to entity type IDs (e.g. "node_type").
+   * Maps config prefixes to entity type IDs (e.g. "node.type" → "node_type").
    *
    * @var array<string, string>
    */
