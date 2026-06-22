@@ -111,11 +111,14 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
   /**
    * {@inheritdoc}
    *
-   * Returns FALSE when this instance was loaded from auto-save storage by
-   * AutoSaveManager. Used by
-   * CanvasConfigEntityTranslationsAreValidConstraintValidator to skip
-   * validation for overrides that will be validated by
-   * LanguageConfigOverrideSchemaChecker when published in the same request.
+   * Returns FALSE in two cases where the in-memory instance must be treated as
+   * authoritative over live config storage:
+   * 1. AutoSaveManager loaded this from the KV auto-save store and called
+   *    enforceIsNew(FALSE) — it will be validated by LanguageConfigOverrideSchemaChecker
+   *    when published, so CanvasConfigEntityTranslationsAreValidConstraintValidator skips it.
+   * 2. ComponentTreeItemList::reconcileConfigEntityTranslations() mutated this
+   *    in-memory and called enforceIsNew(FALSE) — subsequent getTranslation()
+   *    calls must return this mutated instance, not re-read from storage.
    */
   public function isNew(): bool {
     return parent::isNew();

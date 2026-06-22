@@ -309,16 +309,18 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
     \assert($manager instanceof ComponentSourceManager);
     $manager->updateComponentInstances($tree);
 
-    // Stage the updated base entity.
     $auto_save_manager = $this->container->get(AutoSaveManager::class);
     \assert($auto_save_manager instanceof AutoSaveManager);
-    $this->pageRegion->setComponentTree($tree->getValue());
-    $auto_save_manager->saveEntity($this->pageRegion);
 
-    // Stage the translation override (even if empty: publish() will then delete
-    // the live LanguageConfigOverride).
+    // Stage the translation override BEFORE setComponentTree() — the latter
+    // clears stagedOverrides, so a subsequent getTranslation() would re-read
+    // un-pruned data from live config, discarding the reconciliation.
     $staged = $this->pageRegion->getTranslation($assert_langcode);
     $auto_save_manager->saveEntity($staged);
+
+    // Stage the updated base entity.
+    $this->pageRegion->setComponentTree($tree->getValue());
+    $auto_save_manager->saveEntity($this->pageRegion);
 
     // Publish everything through the real auto-save publish controller.
     $payload = [];
