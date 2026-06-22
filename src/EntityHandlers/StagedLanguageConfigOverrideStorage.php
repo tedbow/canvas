@@ -15,7 +15,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 
 final class StagedLanguageConfigOverrideStorage extends ConfigEntityStorage {
 
-  private AutoSaveManager $autoSaveManager;
+  use StagedConfigEntityStorageTrait;
 
   public static function createInstance(ContainerInterface $container, EntityTypeInterface $entity_type) {
     $instance = parent::createInstance($container, $entity_type);
@@ -23,105 +23,27 @@ final class StagedLanguageConfigOverrideStorage extends ConfigEntityStorage {
     return $instance;
   }
 
-  public function resetCache(?array $ids = NULL): void {
-  }
-
-  /**
-   * {@inheritdoc}
-   *
-   * @param string[] $ids
-   *
-   * @return array<string, \Drupal\canvas\Entity\StagedLanguageConfigOverride|null>
-   */
-  // @phpstan-ignore-next-line method.childParameterType
-  public function loadMultiple(?array $ids = NULL): array {
-    if ($ids === NULL) {
-      return [];
-    }
-    $return = [];
-    foreach ($ids as $id) {
-      $return[$id] = $this->load($id);
-    }
-    return $return;
-  }
-
-  /**
-   * {@inheritdoc}
-   *
-   * @return \Drupal\canvas\Entity\StagedLanguageConfigOverride|null
-   */
-  public function load($id) {
-    \assert(\is_string($id));
+  protected function createStub(string $id): EntityInterface {
     [$langcode, $config_name] = \explode('.', $id, 2);
-    $stub = StagedLanguageConfigOverride::createEmpty($langcode, $config_name);
-    $auto_save_entity = $this->autoSaveManager->getAutoSaveEntity($stub);
-    if ($auto_save_entity->entity === NULL) {
-      return NULL;
-    }
-    \assert($auto_save_entity->entity instanceof StagedLanguageConfigOverride);
-    return $auto_save_entity->entity->enforceIsNew(FALSE);
+    return StagedLanguageConfigOverride::createEmpty($langcode, $config_name);
   }
 
-  public function loadUnchanged($id) {
-    return $this->load($id);
-  }
-
-  public function loadByProperties(array $values = []): array {
-    throw new \LogicException('Cannot query staged language config overrides to load by properties.');
-  }
-
-  public function delete(array $entities): void {
-    foreach ($entities as $entity) {
-      $this->autoSaveManager->delete($entity);
-    }
-  }
-
-  public function save(EntityInterface $entity): int {
+  protected function publish(EntityInterface $entity): void {
     \assert($entity instanceof StagedLanguageConfigOverride);
-    $entity->enforceIsNew(FALSE);
-    $entity->setOriginalId($entity->id());
-    $return = SAVED_NEW;
-
-    if ($entity->status() === TRUE) {
-      \assert($this->languageManager instanceof ConfigurableLanguageManagerInterface);
-      $override = $this->languageManager->getLanguageConfigOverride($entity->language()->getId(), $entity->getName());
-      \assert($override instanceof LanguageConfigOverride);
-      if ($entity->isEmpty()) {
-        $override->delete();
-      }
-      else {
-        $data = $entity->getData();
-        \assert(\is_array($data));
-        foreach ($data as $key => $value) {
-          $override->set($key, $value);
-        }
-        $override->save();
-      }
-      return SAVED_UPDATED;
+    \assert($this->languageManager instanceof ConfigurableLanguageManagerInterface);
+    $override = $this->languageManager->getLanguageConfigOverride($entity->language()->getId(), $entity->getName());
+    \assert($override instanceof LanguageConfigOverride);
+    if ($entity->isEmpty()) {
+      $override->delete();
     }
-
-    $existing = $this->autoSaveManager->getAutoSaveEntity($entity);
-    if ($existing->entity instanceof StagedLanguageConfigOverride) {
-      $return = SAVED_UPDATED;
+    else {
+      $data = $entity->getData();
+      \assert(\is_array($data));
+      foreach ($data as $key => $value) {
+        $override->set($key, $value);
+      }
+      $override->save();
     }
-
-    $this->autoSaveManager->saveEntity($entity);
-    return $return;
-  }
-
-  public function restore(EntityInterface $entity): void {
-  }
-
-  public function hasData(): bool {
-    return FALSE;
-  }
-
-  public function getQuery($conjunction = 'AND') {
-    throw new \LogicException('Cannot query staged language config overrides.');
-  }
-
-  public function getAggregateQuery($conjunction = 'AND') {
-    throw new \LogicException('Cannot query staged language config overrides.');
   }
 
 }
