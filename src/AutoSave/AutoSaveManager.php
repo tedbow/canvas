@@ -524,7 +524,7 @@ class AutoSaveManager implements EventSubscriberInterface {
   }
 
   /**
-   * Groups content entity auto-save entries by entity, one snapshot per translation.
+   * Groups content entity auto-save entries by entity, one per translation.
    *
    * A single content entity may have multiple auto-save entries when several
    * translations were edited independently. Each entry holds a snapshot for one
@@ -539,7 +539,8 @@ class AutoSaveManager implements EventSubscriberInterface {
    * that must not run at reconstruction time. This method therefore only groups
    * the raw snapshots; the actual merge happens in the controller at publish
    * time. Contrast with config entities, where coalescing is non-destructive
-   * and happens at reconstruction time inside injectStagedLanguageConfigOverrides().
+   * and happens at reconstruction time inside
+   * injectStagedLanguageConfigOverrides().
    *
    * @param array<string, array{data: array, owner: int, updated: int, entity_type: string, entity_id: string|int, label: string, original_hash: string, data_hash: string, client_id: ?string, langcode: ?string, entity: ?EntityInterface}> $auto_saves
    *   A subset of the getAllAutoSaveList() result, already filtered to the

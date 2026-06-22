@@ -562,9 +562,10 @@ final class ApiAutoSaveController extends ApiControllerBase {
 
         // We ignore those fields that didn't change. We also need to ignore
         // field access for computed fields, because there is nothing to set,
-        // and some fields that will always deny access. We are protected because
-        // the entity validation will trigger errors if those were changed in an
-        // unexpected way. Status and published will be TRUE when publishing.
+        // and some fields that will always deny access. We are protected
+        // because the entity validation will trigger errors if those were
+        // changed in an unexpected way. Status and published will be TRUE when
+        // publishing.
         // TRICKY: some computed fields (`path`, `moderation_state`) are
         // user-editable and persisted on save, so they must still be carried
         // over.
@@ -625,8 +626,8 @@ final class ApiAutoSaveController extends ApiControllerBase {
     $entity->isDefaultRevision(TRUE);
     // Always set the revision user to the current user. Even though we might
     // not be creating a new revision, this would only be in the case where this
-    // entity should be considered new, which means it has never published before
-    // in Drupal Canvas.
+    // entity should be considered new, which means it has never published
+    // before in Drupal Canvas.
     // @see \Drupal\canvas\AutoSave\AutoSaveManager::entityIsConsideredNew()
     if ($revision_user = $entity_definition->getRevisionMetadataKey('revision_user')) {
       \assert(\is_string($revision_user));
