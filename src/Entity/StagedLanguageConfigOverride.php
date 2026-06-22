@@ -37,8 +37,6 @@ use Drupal\language\Config\LanguageConfigOverride;
   label_plural: new TranslatableMarkup("staged language config overrides"),
   entity_keys: [
     'id' => 'id',
-    'label' => 'label',
-    'langcode' => 'langcode',
   ],
   handlers: [
     'storage' => StagedLanguageConfigOverrideStorage::class,
@@ -49,6 +47,13 @@ use Drupal\language\Config\LanguageConfigOverride;
     'langcode',
     'config_name',
     'data',
+  ],
+  constraints: [
+    'ImmutableProperties' => [
+      'id',
+      'langcode',
+      'config_name',
+    ],
   ],
 )]
 final class StagedLanguageConfigOverride extends ConfigEntityBase implements CanvasHttpApiEligibleConfigEntityInterface, AutoSavePublishAwareInterface {
@@ -64,7 +69,9 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
   protected $status = FALSE;
 
   /**
-   * The entity ID: "{langcode}.{config_name}".
+   * ID, composed of content langcode + config name: "{langcode}.{config_name}".
+   *
+   * @see \Drupal\canvas\Plugin\Validation\Constraint\StringPartsConstraint
    */
   protected string $id;
 
@@ -84,6 +91,14 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
 
   public function id(): string {
     return $this->id;
+  }
+
+  public function label(): TranslatableMarkup {
+    // @todo improve
+    return new TranslatableMarkup('@langcode translation of @config_name', [
+      '@langcode' => $this->langcode,
+      '@config_name' => $this->config_name,
+    ]);
   }
 
   /**
@@ -132,6 +147,8 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
 
   /**
    * Returns a value at the given dot-separated key path within the data.
+   *
+   * @see \Drupal\Core\Config\ConfigBase::get()
    */
   public function getData(string $key = ''): mixed {
     if ($key === '') {
@@ -147,6 +164,8 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
 
   /**
    * Sets a value at the given dot-separated key path within the data.
+   *
+   * @see \Drupal\Core\Config\ConfigBase::set()
    */
   public function setData(string $key, mixed $value): self {
     $parts = \explode('.', $key);
@@ -161,6 +180,8 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
 
   /**
    * Clears the value at the given dot-separated key path within the data.
+   *
+   * @see \Drupal\Core\Config\ConfigBase::clear()
    */
   public function clearData(string $key): self {
     $parts = \explode('.', $key);
@@ -177,6 +198,7 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
    * {@inheritdoc}
    */
   public function getCacheTagsToInvalidate(): array {
+    // @see \Drupal\canvas\Entity\StagedConfigUpdate::getCacheTagsToInvalidate()
     return ["config:$this->config_name"];
   }
 
@@ -206,9 +228,12 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
    * {@inheritdoc}
    */
   public function updateFromClientSide(array $data): void {
-    unset($data['status'], $data['langcode'], $data['config_name'], $data['id']);
-    foreach ($data as $key => $value) {
-      parent::set($key, $value);
+    // Prevent the client from changing the status. It should only be modified
+    // when staged changes are published. Also prevent the client from
+    // changing the langcode, config name or ID. Only modifying `data` is
+    // allowed.
+    if (\array_key_exists('data', $data)) {
+      parent::set('data', $data['data']);
     }
   }
 
