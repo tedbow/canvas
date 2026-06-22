@@ -244,6 +244,10 @@ final class ApiAutoSaveController extends ApiControllerBase {
     // entity.
     $violationSets = [];
     $entities = [];
+    // The per-translation auto-save snapshots whose stored data was published,
+    // collected so each can be deleted afterwards (::delete() keys off the
+    // entity language, so grouped translations must be deleted individually).
+    $autoSaveEntities = [];
     // The client auto-saves do not contain the 'data' key, so we need to use
     // the versions from the auto-save manager.
     $publish_auto_saves = array_intersect_key($all_auto_saves, $client_auto_saves);
@@ -275,6 +279,10 @@ final class ApiAutoSaveController extends ApiControllerBase {
       throw new CacheableAccessDeniedHttpException($access_error_cache, \sprintf('Unable to update entities: %s.', implode(', ', \array_map(fn(\Stringable|string|NULL $label) => $label ? "'$label'" : "''", $access_error_labels))));
     }
 
+    // Track which content-entity groups were already processed. Every edited
+    // translation of one content entity is published together (see
+    // ::applyAutoSaveTranslationSnapshots()), so each group is handled once.
+    $processed_content_groups = [];
     foreach ($loadedEntities as $entity) {
       if ($entity instanceof ConfigEntityInterface) {
         $violations = $entity->getTypedData()->validate();
@@ -285,140 +293,42 @@ final class ApiAutoSaveController extends ApiControllerBase {
         if ($entity instanceof AutoSavePublishAwareInterface) {
           $entity->autoSavePublish();
         }
+        $entity->enforceIsNew(FALSE);
+        $entities[] = $entity;
+        $autoSaveEntities[] = $entity;
+        continue;
       }
-      else {
-        \assert($entity instanceof ContentEntityInterface);
-        $auto_save_entity = $entity;
 
-        $fields = $auto_save_entity->getFieldDefinitions();
-        $entity_definition = $auto_save_entity->getEntityType();
-        \assert($entity_definition instanceof ContentEntityTypeInterface);
-        \assert(!\is_null($auto_save_entity->id()));
+      \assert($entity instanceof ContentEntityInterface);
+      $group_key = $entity->getEntityTypeId() . ':' . $entity->id();
+      if (isset($processed_content_groups[$group_key])) {
+        continue;
+      }
+      $processed_content_groups[$group_key] = TRUE;
 
-        // Apply the auto-saved changes onto the stored entity, instead of
-        // saving the entity that was reconstructed from the auto-save snapshot.
-        // The snapshot only ever contains the translation that was edited, so
-        // saving it directly would drop every other translation. Loading the
-        // real entity preserves all translations — and keeps a valid loaded
-        // revision ID, which content_translation's field synchronizer relies on
-        // to pick the correct synchronization source when untranslatable
-        // ("symmetric") field columns are involved.
-        // @see \Drupal\content_translation\FieldTranslationSynchronizer::synchronizeFields()
-        $entity = $this->entityTypeManager->getStorage($auto_save_entity->getEntityTypeId())->loadUnchanged($auto_save_entity->id());
-        \assert($entity instanceof ContentEntityInterface);
-        // The unchanged copy is used both to detect which fields changed and to
-        // determine whether the entity is still considered a draft (which keys
-        // off the stored, pre-edit title).
-        $original_entity = clone $entity;
-        // The auto-save snapshot belongs to a specific translation. Apply the
-        // changes onto that same translation of the stored entity, so editing
-        // (and publishing) a non-default translation never clobbers the others.
-        // Setting a non-translatable field via a non-default translation writes
-        // to the shared (default) value, which is exactly what we want for
-        // symmetric columns.
-        // @see \Drupal\Core\Entity\ContentEntityBase::getTranslatedField()
-        $langcode = $auto_save_entity->language()->getId();
-        $target = $entity->hasTranslation($langcode) ? $entity->getTranslation($langcode) : $entity->addTranslation($langcode);
-        $original_target = $original_entity->hasTranslation($langcode) ? $original_entity->getTranslation($langcode) : $original_entity;
-        foreach ($fields as $field_name => $field) {
-          $field_access = $auto_save_entity->get($field_name)->access(operation: 'edit', return_as_object: TRUE);
-          $original_field = $original_target->get($field_name);
-
-          // We ignore those fields that didn't change. We also need to ignore
-          // field access for computed fields, because there
-          // is nothing to set, and some fields that will always deny access.
-          // We are protected because the entity validation will trigger errors
-          // if those were changed in an unexpected way.
-          // Status and published will be TRUE when publishing.
-          // TRICKY: some computed fields (`path`, `moderation_state`) are
-          // user-editable and persisted on save, so they must still be
-          // carried over.
-          // @see \Drupal\canvas\AutoSave\AutoSaveManager::isPersistedComputedField()
-          $ignore_field = ($field->isComputed() && !AutoSaveManager::isPersistedComputedField($field)) || $original_field->equals($auto_save_entity->get($field_name));
-          $keys = ['id', 'revision_id', 'uuid', 'langcode', 'status', 'published'];
-          $revision_keys = ['revision_created', 'revision_user'];
-          foreach ($keys as $key) {
-            $ignore_field |= $field_name === $entity_definition->getKey($key);
-          }
-          foreach ($revision_keys as $revision_key) {
-            $ignore_field |= $field_name === $entity_definition->getRevisionMetadataKey($revision_key);
-          }
-          if ($ignore_field) {
-            continue;
-          }
-          if ($field_access->isForbidden()) {
-            throw new CacheableAccessDeniedHttpException(
-              (new CacheableMetadata())->addCacheableDependency($field_access),
-              \sprintf('Unable to update field %s for entity "%s".', $field_name, $auto_save_entity->label()),
-            );
-          }
-          // Apply the changed value from the auto-save snapshot onto the edited
-          // translation of the stored entity.
-          $target->set($field_name, $auto_save_entity->get($field_name)->getValue());
-        }
-
-        $is_draft = AutoSaveManager::entityIsConsideredNew($original_entity);
-
-        // The published status is an entity key and therefore excluded from the
-        // field copy above, so carry it over explicitly onto the edited
-        // translation.
-        // For draft entities automatically publish them when publishing
-        // changes.
-        // For non-draft entities, preserve the published status from the
-        // auto-saved entity to allow unpublishing to work correctly.
-        if ($target instanceof EntityPublishedInterface) {
-          \assert($auto_save_entity instanceof EntityPublishedInterface);
-          if ($is_draft || $auto_save_entity->isPublished()) {
-            $target->setPublished();
-          }
-          else {
-            $target->setUnpublished();
-          }
-        }
-        // If the entity is new, the auto-saved data is considered to be part
-        // of the first revision. Therefore, do not create a new revision
-        // for new entities.
-        if ($is_draft) {
-          $entity->setNewRevision(FALSE);
-        }
-        else {
-          // Reset the revision ID.
-          $entity->setNewRevision();
-          $revision_id_key = $entity_definition->getKey('revision');
-          \assert(\is_string($revision_id_key));
-          $entity->set($revision_id_key, NULL);
-        }
-        $entity->isDefaultRevision(TRUE);
-        // Always set the revision user to the current user. Even though we
-        // might not be creating a new revision, this would only be in the case
-        // where this entity should be considered new, which means it has never
-        // published before in Drupal Canvas.
-        // @see \Drupal\canvas\AutoSave\AutoSaveManager::entityIsConsideredNew()
-        if ($revision_user = $entity_definition->getRevisionMetadataKey('revision_user')) {
-          \assert(\is_string($revision_user));
-          $entity->set($revision_user, $this->currentUser->id());
-        }
-        // Even though we will validate each entity individually before it is
-        // saved to ensure the data is still valid after other entities have
-        // been saved, we should still validate here before we save any entities
-        // to avoid saving any entities if any are invalid. This is to avoid,
-        // when possible, any side effects of saving entities that cannot be
-        // undone by rolling back the database transaction, such as sending
-        // emails.
-        $violations = $entity->validate();
-        $form_violations = $this->autoSaveManager->getEntityFormViolations($entity);
-        foreach ($form_violations as $form_violation) {
-          // Add any form violations at this point.
-          // @todo Remove this in https://drupal.org/i/3505018
-          $violations->add($form_violation);
-        }
-        if ($violations->count() > 0) {
-          $violationSets[] = self::getViolationSetsFromPropertyPathsAndRoot($entity, $violations);
-          continue;
-        }
+      $snapshots = AutoSaveManager::groupContentEntityAutoSaves($publish_auto_saves)[$group_key];
+      $entity = $this->applyAutoSaveTranslationSnapshots($snapshots);
+      // Even though we will validate each entity individually before it is
+      // saved to ensure the data is still valid after other entities have
+      // been saved, we should still validate here before we save any entities
+      // to avoid saving any entities if any are invalid. This is to avoid,
+      // when possible, any side effects of saving entities that cannot be
+      // undone by rolling back the database transaction, such as sending
+      // emails.
+      $violations = $entity->validate();
+      $form_violations = $this->autoSaveManager->getEntityFormViolations($entity);
+      foreach ($form_violations as $form_violation) {
+        // Add any form violations at this point.
+        // @todo Remove this in https://drupal.org/i/3505018
+        $violations->add($form_violation);
+      }
+      if ($violations->count() > 0) {
+        $violationSets[] = self::getViolationSetsFromPropertyPathsAndRoot($entity, $violations);
+        continue;
       }
       $entity->enforceIsNew(FALSE);
       $entities[] = $entity;
+      \array_push($autoSaveEntities, ...$snapshots);
     }
     if ($validation_errors_response = self::createJsonResponseFromViolationSets(...$violationSets)) {
       return $validation_errors_response;
@@ -437,7 +347,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
         self::ensureEntityIsValid($entity);
         $entity->save();
       }
-      foreach ($entities as $entity) {
+      foreach ($autoSaveEntities as $entity) {
         $this->autoSaveManager->delete($entity);
       }
     }
@@ -582,6 +492,139 @@ final class ApiAutoSaveController extends ApiControllerBase {
    */
   private static function autoSaveListHasConflicts(array $auto_save_entries): bool {
     return !empty(\array_column($auto_save_entries, self::AUTO_SAVE_CONFLICT_KEY));
+  }
+
+  /**
+   * Applies per-translation auto-save snapshots onto the stored entity.
+   *
+   * Each snapshot holds a single edited translation. They are applied onto one
+   * freshly loaded copy of the stored entity so that all edited translations
+   * are saved together, instead of each snapshot's save reloading and
+   * clobbering the translations written by the previous one.
+   *
+   * For symmetric translation this is required: the shared component-tree
+   * columns (e.g. component_version) are written once for every translation, so
+   * each translation's translatable inputs must be applied in the same save.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityInterface[] $snapshots
+   *   Auto-save snapshots for the same entity, one per edited translation.
+   *
+   * @return \Drupal\Core\Entity\ContentEntityInterface
+   *   The stored entity with every edited translation applied, ready to save.
+   */
+  private function applyAutoSaveTranslationSnapshots(array $snapshots): ContentEntityInterface {
+    $reference = \reset($snapshots);
+    \assert($reference instanceof ContentEntityInterface);
+    \assert($reference->id() !== NULL);
+    // Apply the auto-saved changes onto the stored entity, instead of saving
+    // the entity that was reconstructed from the auto-save snapshot. The
+    // snapshot only ever contains the translation that was edited, so saving it
+    // directly would drop every other translation. Loading the real entity
+    // preserves all translations — and keeps a valid loaded revision ID, which
+    // content_translation's field synchronizer relies on to pick the correct
+    // synchronization source when untranslatable ("symmetric") field columns
+    // are involved.
+    // @see \Drupal\content_translation\FieldTranslationSynchronizer::synchronizeFields()
+    $entity = $this->entityTypeManager->getStorage($reference->getEntityTypeId())->loadUnchanged($reference->id());
+    \assert($entity instanceof ContentEntityInterface);
+    // The unchanged copy is used both to detect which fields changed and to
+    // determine whether the entity is still considered a draft (which keys off
+    // the stored, pre-edit title).
+    $original_entity = clone $entity;
+    $entity_definition = $entity->getEntityType();
+    \assert($entity_definition instanceof ContentEntityTypeInterface);
+    $is_draft = AutoSaveManager::entityIsConsideredNew($original_entity);
+
+    foreach ($snapshots as $auto_save_entity) {
+      \assert($auto_save_entity instanceof ContentEntityInterface);
+      $fields = $auto_save_entity->getFieldDefinitions();
+      // The auto-save snapshot belongs to a specific translation. Apply the
+      // changes onto that same translation of the stored entity, so editing
+      // (and publishing) a non-default translation never clobbers the others.
+      // Setting a non-translatable field via a non-default translation writes
+      // to the shared (default) value, which is exactly what we want for
+      // symmetric columns.
+      // @see \Drupal\Core\Entity\ContentEntityBase::getTranslatedField()
+      $langcode = $auto_save_entity->language()->getId();
+      $target = $entity->hasTranslation($langcode) ? $entity->getTranslation($langcode) : $entity->addTranslation($langcode);
+      $original_target = $original_entity->hasTranslation($langcode) ? $original_entity->getTranslation($langcode) : $original_entity;
+      foreach ($fields as $field_name => $field) {
+        $field_access = $auto_save_entity->get($field_name)->access(operation: 'edit', return_as_object: TRUE);
+        $original_field = $original_target->get($field_name);
+
+        // We ignore those fields that didn't change. We also need to ignore
+        // field access for computed fields, because there is nothing to set,
+        // and some fields that will always deny access. We are protected because
+        // the entity validation will trigger errors if those were changed in an
+        // unexpected way. Status and published will be TRUE when publishing.
+        // TRICKY: some computed fields (`path`, `moderation_state`) are
+        // user-editable and persisted on save, so they must still be carried
+        // over.
+        // @see \Drupal\canvas\AutoSave\AutoSaveManager::isPersistedComputedField()
+        $ignore_field = ($field->isComputed() && !AutoSaveManager::isPersistedComputedField($field)) || $original_field->equals($auto_save_entity->get($field_name));
+        $keys = ['id', 'revision_id', 'uuid', 'langcode', 'status', 'published'];
+        $revision_keys = ['revision_created', 'revision_user'];
+        foreach ($keys as $key) {
+          $ignore_field |= $field_name === $entity_definition->getKey($key);
+        }
+        foreach ($revision_keys as $revision_key) {
+          $ignore_field |= $field_name === $entity_definition->getRevisionMetadataKey($revision_key);
+        }
+        if ($ignore_field) {
+          continue;
+        }
+        if ($field_access->isForbidden()) {
+          throw new CacheableAccessDeniedHttpException(
+            (new CacheableMetadata())->addCacheableDependency($field_access),
+            \sprintf('Unable to update field %s for entity "%s".', $field_name, $auto_save_entity->label()),
+          );
+        }
+        // Apply the changed value from the auto-save snapshot onto the edited
+        // translation of the stored entity.
+        $target->set($field_name, $auto_save_entity->get($field_name)->getValue());
+      }
+
+      // The published status is an entity key and therefore excluded from the
+      // field copy above, so carry it over explicitly onto the edited
+      // translation. For draft entities automatically publish them when
+      // publishing changes. For non-draft entities, preserve the published
+      // status from the auto-saved entity to allow unpublishing to work
+      // correctly.
+      if ($target instanceof EntityPublishedInterface) {
+        \assert($auto_save_entity instanceof EntityPublishedInterface);
+        if ($is_draft || $auto_save_entity->isPublished()) {
+          $target->setPublished();
+        }
+        else {
+          $target->setUnpublished();
+        }
+      }
+    }
+
+    // If the entity is new, the auto-saved data is considered to be part of
+    // the first revision. Therefore, do not create a new revision for new
+    // entities.
+    if ($is_draft) {
+      $entity->setNewRevision(FALSE);
+    }
+    else {
+      // Reset the revision ID.
+      $entity->setNewRevision();
+      $revision_id_key = $entity_definition->getKey('revision');
+      \assert(\is_string($revision_id_key));
+      $entity->set($revision_id_key, NULL);
+    }
+    $entity->isDefaultRevision(TRUE);
+    // Always set the revision user to the current user. Even though we might
+    // not be creating a new revision, this would only be in the case where this
+    // entity should be considered new, which means it has never published before
+    // in Drupal Canvas.
+    // @see \Drupal\canvas\AutoSave\AutoSaveManager::entityIsConsideredNew()
+    if ($revision_user = $entity_definition->getRevisionMetadataKey('revision_user')) {
+      \assert(\is_string($revision_user));
+      $entity->set($revision_user, $this->currentUser->id());
+    }
+    return $entity;
   }
 
 }

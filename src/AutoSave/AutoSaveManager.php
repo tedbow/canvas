@@ -513,6 +513,36 @@ class AutoSaveManager implements EventSubscriberInterface {
   }
 
   /**
+   * Groups content entity auto-save entries by entity, one snapshot per translation.
+   *
+   * A single content entity may have multiple auto-save entries when several
+   * translations were edited independently. Each entry holds a snapshot for one
+   * translation. This method collects all snapshots for the same entity into a
+   * group so they can be applied together in a single save, preventing later
+   * snapshots from clobbering translations written by earlier ones.
+   *
+   * @param array<string, array{data: array, owner: int, updated: int, entity_type: string, entity_id: string|int, label: string, original_hash: string, data_hash: string, client_id: ?string, langcode: ?string, entity: ?EntityInterface}> $auto_saves
+   *   A subset of the getAllAutoSaveList() result, already filtered to the
+   *   entries that should be published, with 'entity' populated.
+   *
+   * @return array<string, \Drupal\Core\Entity\ContentEntityInterface[]>
+   *   Snapshot entities grouped by "{entity_type}:{entity_id}", preserving the
+   *   order of the input. Config entity entries are silently skipped.
+   */
+  public static function groupContentEntityAutoSaves(array $auto_saves): array {
+    $groups = [];
+    foreach ($auto_saves as $entry) {
+      $entity = $entry['entity'];
+      if (!$entity instanceof ContentEntityInterface) {
+        continue;
+      }
+      $group_key = $entity->getEntityTypeId() . ':' . $entity->id();
+      $groups[$group_key][] = $entity;
+    }
+    return $groups;
+  }
+
+  /**
    * Checks if there is an unresolved conflict and returns its id.
    *
    * This method only handles conflicts in scenarios where an entity on which
