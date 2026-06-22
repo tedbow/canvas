@@ -106,6 +106,9 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
   public function set($property_name, $value) {
     if ($property_name === 'component_tree') {
       $value = self::componentTreeInstancesInputsMustBeArrays($value);
+      // Clear cached staged overrides: the new tree may have different
+      // component instances, so any previously loaded translations are stale.
+      $this->stagedOverrides = [];
     }
     return parent::set($property_name, $value);
   }
@@ -231,13 +234,21 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
     \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
     \assert($langcode !== $language_manager->getDefaultLanguage()->getId(), 'getTranslation() must not be called with the default langcode; the default translation is the base config.');
 
-    if (!isset($this->stagedOverrides[$langcode])) {
-      $override = $language_manager->getLanguageConfigOverride($langcode, $this->getConfigDependencyName());
-      \assert($override instanceof LanguageConfigOverride);
-      $this->stagedOverrides[$langcode] = $override->isNew()
-        ? StagedLanguageConfigOverride::createEmpty($langcode, $this->getConfigDependencyName())
-        : StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
+    // Only treat a cached entry as authoritative when AutoSaveManager has
+    // injected data from the KV store (isNew() === FALSE). That mutation must
+    // survive repeated calls, so we return the same mutated instance. For
+    // live-config overrides (isNew() === TRUE) re-read from storage each time:
+    // the live config may have been updated since the instance was cached (e.g.
+    // by config_translation UI), and staleness would silently skip validation
+    // of the new value.
+    if (isset($this->stagedOverrides[$langcode]) && !$this->stagedOverrides[$langcode]->isNew()) {
+      return $this->stagedOverrides[$langcode];
     }
+    $override = $language_manager->getLanguageConfigOverride($langcode, $this->getConfigDependencyName());
+    \assert($override instanceof LanguageConfigOverride);
+    $this->stagedOverrides[$langcode] = $override->isNew()
+      ? StagedLanguageConfigOverride::createEmpty($langcode, $this->getConfigDependencyName())
+      : StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
     return $this->stagedOverrides[$langcode];
   }
 
