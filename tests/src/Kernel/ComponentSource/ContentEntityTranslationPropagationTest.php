@@ -42,13 +42,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   /**
    * {@inheritdoc}
    */
-  protected static function componentMachineName(): string {
-    return 'prop_propagation_test';
-  }
-
-  /**
-   * {@inheritdoc}
-   */
   protected function setUp(): void {
     parent::setUp();
     $this->installEntitySchema('user');
@@ -69,7 +62,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
       'components' => [
         [
           'uuid' => self::COMPONENT_UUID,
-          'component_id' => 'js.prop_propagation_test',
+          'component_id' => 'js.translatable_js_component',
           'component_version' => $this->originalVersion,
           'parent_uuid' => NULL,
           'inputs' => $en_inputs,

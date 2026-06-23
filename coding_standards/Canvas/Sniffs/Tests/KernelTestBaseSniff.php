@@ -7,6 +7,7 @@ namespace Canvas\Sniffs\Tests;
 use Drupal\KernelTests\Core\Config\ConfigEntityValidationTestBase;
 use Drupal\Tests\canvas\Kernel\Audit\ComponentAuditTestBase;
 use Drupal\Tests\canvas\Kernel\CanvasKernelTestBase;
+use Drupal\Tests\canvas\Kernel\ComponentSource\ConfigEntitySymmetricalTranslationPropagationTestBase;
 use Drupal\Tests\canvas\Kernel\ComponentSource\TranslationPropagationTestBase;
 use Drupal\Tests\canvas\Kernel\Config\AssetLibraryStorageTest;
 use Drupal\Tests\canvas\Kernel\Config\BetterConfigEntityValidationTestBase;
@@ -42,6 +43,7 @@ class KernelTestBaseSniff implements Sniff {
     PropSourceMatcherTestBase::class,
     ContentComponentTreeSymmetricalTranslationTestBase::class,
     TranslationPropagationTestBase::class,
+    ConfigEntitySymmetricalTranslationPropagationTestBase::class,
   ];
 
   public const ALLOWED_OTHER_BASE_CLASSES = [

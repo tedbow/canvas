@@ -1,0 +1,131 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\Tests\canvas\Kernel\ComponentSource;
+
+// cspell:ignore Hola mundo opcional ranura
+
+use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\Entity\ContentTemplate;
+use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
+use Drupal\language\Config\LanguageConfigOverride;
+use Drupal\language\ConfigurableLanguageManagerInterface;
+use Drupal\node\Entity\NodeType;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversMethod;
+use PHPUnit\Framework\Attributes\Group;
+
+/**
+ * Tests component instance update propagation to ContentTemplate translations.
+ *
+ * ContentTemplate is a ComponentTreeConfigEntityBase with an additional
+ * translatable field outside the component tree: `exposed_slots` labels. This
+ * class verifies that reconciliation correctly handles that non-tree data.
+ */
+#[CoversClass(ComponentSourceManager::class)]
+#[CoversMethod(ComponentTreeItemList::class, 'reconcileTranslationsWithUpdatedItems')]
+#[CoversMethod(ComponentTreeItemList::class, 'reconcileConfigEntityTranslations')]
+#[Group('canvas')]
+#[Group('canvas_component_sources')]
+#[Group('canvas_data_model')]
+#[Group('canvas_translation')]
+final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigEntitySymmetricalTranslationPropagationTestBase {
+
+  /**
+   * {@inheritdoc}
+   */
+  protected static $modules = [
+    'node',
+    'field',
+  ];
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function setUp(): void {
+    parent::setUp();
+    $this->installEntitySchema('path_alias');
+    $this->installEntitySchema('user');
+    $this->installConfig(['node', 'user']);
+
+    NodeType::create(['type' => 'helpful', 'name' => 'Helpful'])->save();
+
+    $this->translatedConfigEntity = ContentTemplate::create([
+      'content_entity_type_id' => 'node',
+      'content_entity_type_bundle' => 'helpful',
+      'content_entity_type_view_mode' => 'full',
+      'component_tree' => self::populateActiveComponentVersionPlaceholders($this->translatableComponentTree),
+      'exposed_slots' => [
+        'test_slot' => [
+          'label' => 'Test slot',
+          'component_uuid' => static::TRANSLATED_COMPONENT_INSTANCE_UUID,
+          'slot_name' => 'test_slot',
+        ],
+      ],
+    ]);
+    self::assertSame(SAVED_NEW, $this->translatedConfigEntity->save());
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function writeSpanishOverride(array $inputs): void {
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    $override = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
+    \assert($override instanceof LanguageConfigOverride);
+    $override->set('component_tree', [
+      static::TRANSLATED_COMPONENT_INSTANCE_UUID => [
+        'inputs' => $inputs,
+      ],
+    ]);
+    $override->save();
+  }
+
+  /**
+   * Tests that exposed_slot label overrides survive tree reconciliation.
+   *
+   * ContentTemplate stores exposed_slots data in the LanguageConfigOverride
+   * alongside component_tree. Reconciliation must not touch that non-tree data.
+   */
+  public function testExposedSlotLabelOverridePreserved(): void {
+    // Write a Spanish override that includes both component_tree and
+    // exposed_slots translations.
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    $override = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
+    \assert($override instanceof LanguageConfigOverride);
+    $override->set('component_tree', [
+      static::TRANSLATED_COMPONENT_INSTANCE_UUID => [
+        'inputs' => ['required_text' => 'Hola mundo', 'optional_text' => 'opcional ES'],
+      ],
+    ]);
+    // Translations only override the translatable `label`; the structural keys
+    // `component_uuid` and `slot_name` remain in the base config.
+    $override->set('exposed_slots.test_slot.label', 'ranura de prueba');
+    $override->save();
+
+    // Remove optional_text — this triggers reconciliation of component_tree.
+    $this->removeOptionalProp();
+    $this->generateComponentConfig();
+
+    $tree = $this->translatedConfigEntity->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    $manager->updateComponentInstances($tree);
+
+    $staged = $this->translatedConfigEntity->getTranslation('es');
+
+    // component_tree reconciliation must prune optional_text.
+    $inputs = $staged->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
+    self::assertIsArray($inputs);
+    self::assertArrayNotHasKey('optional_text', $inputs, 'Deleted prop must be pruned from staged override.');
+    self::assertSame('Hola mundo', $inputs['required_text']);
+
+    // exposed_slots must be untouched by reconciliation.
+    $slot_label = $staged->getData('exposed_slots.test_slot.label');
+    self::assertSame('ranura de prueba', $slot_label, 'Exposed slot label override must survive tree reconciliation.');
+  }
+
+}

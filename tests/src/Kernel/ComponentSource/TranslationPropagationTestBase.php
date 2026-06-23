@@ -4,24 +4,24 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
+use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\JavaScriptComponent;
+use Drupal\canvas\Plugin\Canvas\ComponentSource\JsComponentDiscovery;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\Tests\canvas\Kernel\CanvasKernelTestBase;
 use Drupal\Tests\canvas\Traits\GenerateComponentConfigTrait;
+use Drupal\Tests\user\Traits\UserCreationTrait;
 
 /**
- * Shared fixture for translation propagation kernel tests.
+ * Shared fixture for symmetrical translation propagation kernel tests.
  *
  * Provides the JavaScriptComponent fixture and prop-mutation helpers that are
- * identical across ConfigEntityTranslationPropagationTest and
- * ContentEntityTranslationPropagationTest.
- *
- * @see \Drupal\Tests\canvas\Kernel\ComponentSource\ConfigEntityTranslationPropagationTest
- * @see \Drupal\Tests\canvas\Kernel\ComponentSource\ContentEntityTranslationPropagationTest
+ * identical across all translation propagation test classes.
  */
 abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
 
   use GenerateComponentConfigTrait;
+  use UserCreationTrait;
 
   /**
    * {@inheritdoc}
@@ -48,7 +48,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     ConfigurableLanguage::createFromLangcode('es')->save();
 
     $this->jsComponent = JavaScriptComponent::create([
-      'machineName' => static::componentMachineName(),
+      'machineName' => 'translatable_js_component',
       'name' => 'Prop Propagation Test',
       'status' => TRUE,
       'props' => [
@@ -64,6 +64,13 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
         ],
       ],
       'required' => ['required_text'],
+      'slots' => [
+        'test_slot' => [
+          'title' => 'Test slot',
+          'description' => 'A slot used to exercise exposed-slot translations.',
+          'examples' => ['Slot content'],
+        ],
+      ],
       'js' => [
         'original' => 'console.log("test")',
         'compiled' => 'console.log("test")',
@@ -77,18 +84,11 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     self::assertSame(SAVED_NEW, $this->jsComponent->save());
     $this->generateComponentConfig();
 
-    $component = \Drupal::entityTypeManager()->getStorage('component')->load('js.' . static::componentMachineName());
+    $component_id = JsComponentDiscovery::getComponentConfigEntityId($this->jsComponent->id());
+    $component = Component::load($component_id);
     self::assertNotNull($component);
     $this->originalVersion = $component->getActiveVersion();
   }
-
-  /**
-   * Returns the machine name used when creating the JavaScriptComponent fixture.
-   *
-   * Subclasses override this to avoid machine name collisions when multiple
-   * test classes share the same test database.
-   */
-  abstract protected static function componentMachineName(): string;
 
   protected function addOptionalProp(): void {
     $props = $this->jsComponent->getProps();
@@ -128,6 +128,14 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     unset($props['optional_text']);
     $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
     $this->jsComponent->setProps($props)->save();
+  }
+
+  protected function removeBothProps(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    unset($props['required_text'], $props['optional_text']);
+    $props['count'] = ['type' => 'integer', 'title' => 'Count', 'examples' => [3]];
+    $this->jsComponent->setProps($props)->set('required', [])->save();
   }
 
 }
