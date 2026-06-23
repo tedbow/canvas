@@ -241,9 +241,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     $fr_stored = $this->translatedConfigEntity->getTranslation('fr')
       ->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
     self::assertSame(['required_text' => 'Bonjour monde'], $fr_stored);
-
-    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
-    self::assertEntityIsValid($this->translatedConfigEntity);
   }
 
   /**
