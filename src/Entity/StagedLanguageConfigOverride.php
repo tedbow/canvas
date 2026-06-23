@@ -31,10 +31,10 @@ use Drupal\language\Config\LanguageConfigOverride;
  */
 #[ConfigEntityType(
   id: self::ENTITY_TYPE_ID,
-  label: new TranslatableMarkup("Staged language config override"),
-  label_collection: new TranslatableMarkup("Staged language config overrides"),
-  label_singular: new TranslatableMarkup("staged language config override"),
-  label_plural: new TranslatableMarkup("staged language config overrides"),
+  label: new TranslatableMarkup("Staged configuration translation"),
+  label_collection: new TranslatableMarkup("Staged configuration translations"),
+  label_singular: new TranslatableMarkup("staged configuration translation"),
+  label_plural: new TranslatableMarkup("staged configuration translations"),
   entity_keys: [
     'id' => 'id',
   ],
@@ -109,18 +109,17 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
   }
 
   /**
-   * Returns whether this staged override has no data.
+   * Whether this staged config translation is empty (nothing is translated).
    *
    * Distinct from ConfigEntityBase::isNew() (which indicates whether the entity
-   * has been persisted to auto-save storage). An override is empty when
-   * reconciliation pruned all translatable inputs from it.
+   * has been persisted to auto-save storage).
    */
   public function isEmpty(): bool {
     return empty($this->data);
   }
 
   /**
-   * Loads a staged override for a LanguageConfigOverride, or creates a new one.
+   * Loads existing or creates from a LanguageConfigOverride.
    */
   public static function fromLanguageConfigOverride(LanguageConfigOverride $stored_override): self {
     $langcode = $stored_override->getLangcode();
@@ -141,18 +140,6 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
     ]);
     \assert($new->isNew() === TRUE);
     return $new;
-  }
-
-  /**
-   * Creates an empty staged override for a given langcode + config name.
-   */
-  public static function createEmpty(string $langcode, string $config_name): self {
-    return self::create([
-      'id' => "$langcode.$config_name",
-      'langcode' => $langcode,
-      'config_name' => $config_name,
-      'data' => [],
-    ]);
   }
 
   /**

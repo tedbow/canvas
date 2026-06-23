@@ -25,7 +25,11 @@ final class StagedLanguageConfigOverrideStorage extends ConfigEntityStorage {
 
   protected function createStub(string $id): EntityInterface {
     [$langcode, $config_name] = \explode('.', $id, 2);
-    return StagedLanguageConfigOverride::createEmpty($langcode, $config_name);
+    return $this->create([
+      'id' => "$langcode.$config_name",
+      'langcode' => $langcode,
+      'config_name' => $config_name,
+    ]);
   }
 
   protected function publish(EntityInterface $entity): void {
