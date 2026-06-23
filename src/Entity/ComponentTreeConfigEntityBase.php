@@ -199,6 +199,7 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * @return \Drupal\Core\Language\LanguageInterface[]
    *   Language objects keyed by langcode.
    *
+   * @todo Remove when https://www.drupal.org/project/drupal/issues/3203918 is done.
    * @todo Move to interface + trait, to allow any config entity type to be able to benefit from auto-saved-config-translation-changes in Canvas. For now, Canvas only allows translating config entities with component trees, so not yet relevant.
    *
    * @internal
@@ -238,14 +239,15 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * Throws if called with the default language's langcode, since the default
    * translation is the base config — not an override.
    *
-   * @todo Move to interface + trait, to allow any config entity type to be able to benefit from auto-saved-config-translation-changes in Canvas. For now, Canvas only allows translating config entities with component trees, so not yet relevant.
-   *
    * @return \Drupal\canvas\Entity\StagedLanguageConfigOverride
    *   Either
    *   - a stored StagedLanguageConfigOverride if one exists (note this object
    *     can be modified by reference), ::isNew() will return FALSE
    *   - a new one, constructed from LanguageConfigOverride (which itself could
    *     be empty/new), ::isNew() will return TRUE
+   *
+   * @todo Remove when https://www.drupal.org/project/drupal/issues/3203918 is done.
+   * @todo Move to interface + trait, to allow any config entity type to be able to benefit from auto-saved-config-translation-changes in Canvas. For now, Canvas only allows translating config entities with component trees, so not yet relevant.
    *
    * @internal
    */
