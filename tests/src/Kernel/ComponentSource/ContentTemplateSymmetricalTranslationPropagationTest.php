@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
-// cspell:ignore Hola mundo opcional ranura
+// cspell:ignore Hola mundo opcional ranura prueba
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\ContentTemplate;
