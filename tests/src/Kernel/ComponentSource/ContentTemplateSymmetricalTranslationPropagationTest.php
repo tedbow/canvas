@@ -64,6 +64,7 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
         ],
       ],
     ]);
+    self::assertEntityIsValid($this->translatedConfigEntity);
     self::assertSame(SAVED_NEW, $this->translatedConfigEntity->save());
   }
 

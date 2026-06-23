@@ -41,6 +41,7 @@ final class PageRegionSymmetricalTranslationPropagationTest extends ConfigEntity
       'region' => 'sidebar_first',
       'component_tree' => self::populateActiveComponentVersionPlaceholders($this->translatableComponentTree),
     ]);
+    self::assertEntityIsValid($this->translatedConfigEntity);
     self::assertSame(SAVED_NEW, $this->translatedConfigEntity->save());
   }
 

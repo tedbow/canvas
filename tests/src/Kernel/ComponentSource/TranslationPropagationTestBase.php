@@ -93,6 +93,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected function addOptionalProp(): void {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
+    \assert(!\array_key_exists('voice', $props));
     $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
     $this->jsComponent->setProps($props)->save();
   }
@@ -100,6 +101,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected function addRequiredProp(): void {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
+    \assert(!\array_key_exists('voice', $props));
     $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
     $required = $this->jsComponent->getRequiredProps();
     $required[] = 'voice';
@@ -109,6 +111,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected function removeOptionalProp(): void {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
+    \assert(\array_key_exists('optional_text', $props));
     unset($props['optional_text']);
     $this->jsComponent->setProps($props)->save();
   }
@@ -116,6 +119,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected function changePropType(): void {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
+    \assert(\array_key_exists('required_text', $props));
     // Change required_text from string to integer — an unsafe change that
     // blocks the update for all translations.
     $props['required_text'] = ['type' => 'integer', 'title' => 'Required Int', 'examples' => [42]];
@@ -125,6 +129,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected function removeAndAddProp(): void {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
+    \assert(\array_key_exists('optional_text', $props));
     unset($props['optional_text']);
     $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
     $this->jsComponent->setProps($props)->save();
@@ -133,6 +138,8 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected function removeBothProps(): void {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
+    \assert(\array_key_exists('optional_text', $props));
+    \assert(\array_key_exists('required_text', $props));
     unset($props['required_text'], $props['optional_text']);
     $props['count'] = ['type' => 'integer', 'title' => 'Count', 'examples' => [3]];
     $this->jsComponent->setProps($props)->set('required', [])->save();

@@ -32,6 +32,7 @@ use Symfony\Component\HttpFoundation\Response;
  * therefore operates at the override level, not at the entity level.
  *
  * @phpstan-import-type ComponentTreeItemListArray from \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList
+ * @phpstan-import-type OptimizedSingleComponentInputArray from \Drupal\canvas\Plugin\DataType\ComponentInputs
  */
 abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends TranslationPropagationTestBase {
 
@@ -74,6 +75,8 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
 
   /**
    * Writes a LanguageConfigOverride for the entity's Spanish translation.
+   *
+   * @param OptimizedSingleComponentInputArray $inputs
    */
   abstract protected function writeSpanishOverride(array $inputs): void;
 
@@ -94,6 +97,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
       'required_text' => 'Hola mundo',
       'optional_text' => 'opcional ES',
     ]);
+    self::assertEntityIsValid($this->translatedConfigEntity);
 
     $this->{$setup_method}();
     $this->generateComponentConfig();
@@ -149,6 +153,8 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
         'optional_text' => 'opcional ES',
       ],
     ];
+    // This has a sibling test that tests the full lifecycle.
+    // @see ::testPublishWritesToLiveOverride()
     yield 'Optional prop deleted — orphaned key pruned from override' => [
       'setup_method' => 'removeOptionalProp',
       'expected_modified' => TRUE,
@@ -177,6 +183,8 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
         'required_text' => 'Hola mundo',
       ],
     ];
+    // This has a sibling test that tests the full lifecycle.
+    // @see ::testPublishDeletesEmptyOverride()
     yield 'All translatable props deleted — override record deleted entirely' => [
       'setup_method' => 'removeBothProps',
       'expected_modified' => TRUE,
@@ -250,18 +258,31 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   /**
    * Runs updateComponentInstances() and publishes via the real auto-save path.
    *
-   * Exercises the full staged-override lifecycle: reconcile in memory → stage
-   * the entity and its translation overrides → publish all via
-   * ApiAutoSaveController::post(). The base entity is saved first (updating the
-   * live config), so the schema checker accepts the stripped translation
-   * override when it is published in the same request.
+   * Exercises the full lifecycle:
+   * 1. A `LanguageConfigOverride` exists for `es`
+   * 2. Generate a `StagedLanguageConfigOverride for this `es` translation
+   * 3. It must now not yet be saved, only exist in memory
+   * 4. Let it be updated via:
+   *    ComponentSourceManager::updateComponentInstances()
+   *    → ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   * 5. Call StagedLanguageConfigOverride::save() to move it from PHP memory to
+   *    the entity type's storage (i.e. AutoSaveManager)
+   * 6. Publish it via the real auto-save controller, which will first ensure it
+   *    is valid:
+   *    and will then trigger
+   *    StagedLanguageConfigOverride::autoSavePublish()
+   *    → StagedConfigEntityStorageTrait::save()
+   *    → StagedLanguageConfigOverrideStorage::publish()
+   *    → LanguageConfigOverride::set()
+   *    → LanguageConfigOverride::save()
    *
-   * Returns the in-memory staged override for the given langcode, so callers
-   * can inspect in-memory state before publish if needed.
+   * @return \Drupal\canvas\Entity\StagedLanguageConfigOverride
+   *   The he in-memory staged config translation, so callers can inspect the
+   *   in-memory, pre-publish state if needed.
    */
   protected function updateAndPublishOverrides(string $assert_langcode = 'es'): StagedLanguageConfigOverride {
-    // Router must be built before UserCreationTrait::setUpCurrentUser() triggers
-    // FilterPermissions::permissions() → URL generation.
+    // Router must be built before UserCreationTrait::setUpCurrentUser()
+    // triggers FilterPermissions::permissions()  URL generation.
     $this->container->get('router.builder')->rebuild();
 
     $admin_permission = $this->translatedConfigEntity->getEntityType()->getAdminPermission();
@@ -284,12 +305,14 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // un-pruned data from live config, discarding the reconciliation.
     $staged = $this->translatedConfigEntity->getTranslation($assert_langcode);
     self::assertTrue($staged->isNew());
+    self::assertFalse($staged->status());
     $staged->save();
 
     // Assert that both the retrieved-and-now-saved StagedLanguageConfigOverride
     // and its origin (the config entity's ::getTranslation() method) convey
     // that the StagedLanguageConfigOverride has been saved.
     self::assertFalse($staged->isNew());
+    self::assertFalse($staged->status());
     self::assertFalse($this->translatedConfigEntity->getTranslation($assert_langcode)->isNew());
 
     // Stage the updated base entity.
@@ -301,9 +324,18 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertEntityIsValid($this->translatedConfigEntity);
     $auto_save_manager->saveEntity($this->translatedConfigEntity);
 
+    // Both the translated config entity and the Spanish
+    // StagedLanguageConfigOverride must now be in auto-save storage.
+    // @todo 🚧 The StagedLanguageConfigOverrides should NOT appear in this list, to match the behavior for content entities introduced in https://git.drupalcode.org/project/canvas/-/work_items/3591704
+    $all_auto_saves = $auto_save_manager->getAllAutoSaveList(FALSE, FALSE);
+    self::assertSame([
+      AutoSaveManager::getAutoSaveKey($this->translatedConfigEntity),
+      AutoSaveManager::getAutoSaveKey($staged),
+    ], \array_keys($all_auto_saves));
+
     // Publish everything through the real auto-save publish controller.
     $payload = [];
-    foreach ($auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE) as $key => $info) {
+    foreach ($all_auto_saves as $key => $info) {
       $payload[$key] = ['data_hash' => $info['data_hash']];
     }
     $request = Request::create('/canvas/api/v0/auto-saves/publish', 'POST', content: (string) \json_encode($payload));
@@ -311,6 +343,9 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     \assert($controller instanceof ApiAutoSaveController);
     $response = $controller->post($request);
     self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+
+    // No auto-saves left.
+    self::assertSame([], $auto_save_manager->getAllAutoSaveList(FALSE, FALSE));
 
     return $staged;
   }
