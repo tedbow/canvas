@@ -627,6 +627,21 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
    *   Update snapshots keyed by UUID.
    */
   private function reconcileContentEntityTranslations(TranslatableInterface $entity, array $updated): void {
+    // @todo This assumes symmetric translation; under asymmetric translation
+    //   each translation owns its tree and must not be reconciled against the
+    //   default. See
+    //   https://git.drupalcode.org/project/canvas/-/work_items/3571130.
+    // JsonSchemaPropsComponentInstanceUpdater::update() prunes deleted-slot
+    // children from the default tree it operates on, but not from the separate
+    // per-translation trees. Collect the UUIDs surviving in the updated default
+    // tree so any instance missing from it can be pruned from each translation
+    // below, keeping every translation structurally in sync.
+    $surviving_uuids = [];
+    foreach ($this as $item) {
+      \assert($item instanceof ComponentTreeItem);
+      $surviving_uuids[$item->getUuid()] = TRUE;
+    }
+
     // include_default: FALSE — skip the default translation (already updated).
     foreach ($entity->getTranslationLanguages(include_default: FALSE) as $language) {
       $translation = $entity->getTranslation($language->getId());
@@ -652,6 +667,10 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
           $snapshot['default_explicit_input'] ?? [],
         );
       }
+
+      // Mirror the default tree's structure: drop instances no longer present
+      // in it (e.g. children orphaned by a deleted slot).
+      $translation_tree->filter(static fn (ComponentTreeItem $item): bool => isset($surviving_uuids[$item->getUuid()]));
     }
   }
 

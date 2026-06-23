@@ -496,4 +496,101 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     self::assertSame('Opcional ES', $es_inputs['optional_text']);
   }
 
+  /**
+   * Tests that deleting a slot cleans up the orphaned child in translations.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  public function testSlotDeletedCleanup(): void {
+    $page = Page::create([
+      'title' => 'Slot test page',
+      'langcode' => 'en',
+      'components' => [
+        [
+          'uuid' => self::COMPONENT_UUID,
+          'component_id' => 'js.translatable_js_component',
+          'component_version' => $this->originalVersion,
+          'parent_uuid' => NULL,
+          'inputs' => ['required_text' => 'Parent EN'],
+        ],
+        [
+          'uuid' => self::SECOND_UUID,
+          'component_id' => 'js.translatable_js_component',
+          'component_version' => $this->originalVersion,
+          'parent_uuid' => self::COMPONENT_UUID,
+          'slot' => 'test_slot',
+          'inputs' => ['required_text' => 'Child EN'],
+        ],
+      ],
+    ]);
+    self::assertSame(SAVED_NEW, $page->save());
+
+    $translation = $page->addTranslation('es');
+    $translation->set('title', 'Página de prueba');
+    $translation->set('components', $page->get('components')->getValue());
+    $es_tree = $translation->getComponentTree();
+    $child_item = $es_tree->getComponentTreeItemByUuid(self::SECOND_UUID);
+    \assert($child_item !== NULL);
+    $child_item->setInput(['required_text' => 'Hijo ES']);
+    $translation->save();
+
+    $page = Page::load($page->id());
+    \assert($page instanceof Page);
+
+    // Delete every slot from the component — orphans the child instance.
+    $this->jsComponent->set('slots', [])->save();
+    $this->generateComponentConfig();
+
+    $tree = $page->getComponentTree();
+    self::assertCount(2, $tree);
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($tree));
+
+    // The child is gone from the (shared) default-translation tree.
+    self::assertCount(1, $tree);
+    self::assertNull($tree->getComponentTreeItemByUuid(self::SECOND_UUID));
+
+    // Persist the pruned tree (as the controller does) and reload.
+    $page->setComponentTree($tree->getValue());
+    $page->save();
+    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
+    $page = Page::load($page->id());
+    \assert($page instanceof Page);
+
+    // The Spanish translation must no longer carry the orphaned child's inputs,
+    // while the parent's translated inputs stay intact.
+    self::assertNull(self::getInputs($page, 'es', self::SECOND_UUID), 'Translated inputs for a child in a deleted slot must be cleaned up.');
+    self::assertNotNull(self::getInputs($page, 'es', self::COMPONENT_UUID));
+  }
+
+  /**
+   * Tests that adding a slot leaves existing translations intact.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  public function testNewSlotAddedPreservesTranslations(): void {
+    $page = $this->createPageWithTranslation();
+
+    // Add a new slot to the component.
+    $slots = $this->jsComponent->get('slots');
+    $slots['new-slot'] = [
+      'title' => 'new',
+      'description' => 'A new slot',
+      'examples' => ['New slot content'],
+    ];
+    $this->jsComponent->set('slots', $slots)->save();
+    $this->generateComponentConfig();
+
+    $tree = $page->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($tree));
+
+    $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
+    self::assertNotNull($es_inputs);
+    self::assertSame('Hola mundo', $es_inputs['required_text']);
+    self::assertSame('Opcional ES', $es_inputs['optional_text']);
+  }
+
 }
