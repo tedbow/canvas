@@ -6,7 +6,6 @@ namespace Drupal\canvas\Plugin\Validation\Constraint;
 
 use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\Component\Utility\NestedArray;
-use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\Entity\ConfigEntityInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
@@ -31,7 +30,6 @@ final class CanvasConfigEntityTranslationsAreValidConstraintValidator extends Co
   public function __construct(
     private readonly ConfigurableLanguageManagerInterface $languageManager,
     private readonly TypedConfigManagerInterface $typedConfigManager,
-    private readonly ConfigFactoryInterface $configFactory,
   ) {}
 
   /**
@@ -43,7 +41,6 @@ final class CanvasConfigEntityTranslationsAreValidConstraintValidator extends Co
     return new static(
       $language_manager,
       $container->get(TypedConfigManagerInterface::class),
-      $container->get(ConfigFactoryInterface::class),
     );
   }
 
@@ -58,7 +55,20 @@ final class CanvasConfigEntityTranslationsAreValidConstraintValidator extends Co
     }
 
     $name = $value->getConfigDependencyName();
-    $base_data = $this->configFactory->get($name)->getRawData();
+    // Use the config entity in $value, not the stored config: otherwise it is
+    // impossible to validate a config entity with its translations prior to
+    // saving: it'd compare the staged config translations to the stored config
+    // entity instead of the given entity (e.g. an auto-saved one).
+    $base_data = $value->toArray();
+    // @see \Drupal\canvas\Entity\ComponentTreeConfigEntityBase::preSave()
+    // Note: if Canvas ever wants to allow arbitrary config entity types to
+    // contain Canvas component trees: remove the ComponentTreeConfigEntityBase
+    // instance check and instead check for the presence of
+    // `type: canvas.component_tree` in the given config entity's config schema.
+    if ($value instanceof ComponentTreeConfigEntityBase) {
+      \assert(\array_key_exists('component_tree', $base_data));
+      $base_data['component_tree'] = ComponentTreeConfigEntityBase::asDeterministicallyAndTranslatableKeyedComponentTreeSequence($base_data['component_tree']);
+    }
     $default_langcode = $this->languageManager->getDefaultLanguage()->getId();
     $languages = $this->languageManager->getLanguages();
 
