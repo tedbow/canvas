@@ -68,6 +68,10 @@ final class CanvasConfigEntityTranslationsAreValidConstraintValidator extends Co
     if ($value instanceof ComponentTreeConfigEntityBase) {
       \assert(\array_key_exists('component_tree', $base_data));
       $base_data['component_tree'] = ComponentTreeConfigEntityBase::asDeterministicallyAndTranslatableKeyedComponentTreeSequence($base_data['component_tree']);
+      // Calling ComponentTreeConfigEntityBase::getTranslation() has a static
+      // caching side effect. Ensure that callers don't have to deal with the
+      // consequences.
+      $value = clone $value;
     }
     $default_langcode = $this->languageManager->getDefaultLanguage()->getId();
     $languages = $this->languageManager->getLanguages();
