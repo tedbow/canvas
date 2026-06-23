@@ -25,6 +25,7 @@ use PHPUnit\Framework\Attributes\Group;
 #[Group('canvas_component_sources')]
 #[Group('canvas_data_model')]
 #[Group('canvas_translation')]
+#[Group('slow')]
 final class PageRegionSymmetricalTranslationPropagationTest extends ConfigEntitySymmetricalTranslationPropagationTestBase {
 
   /**
