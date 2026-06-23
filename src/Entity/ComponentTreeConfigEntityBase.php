@@ -234,7 +234,8 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * Analogous to TranslatableInterface::getTranslation(), but returns a
    * StagedLanguageConfigOverride entity rather than a translated entity object.
    * The same instance is returned on repeated calls for the same langcode,
-   * so in-memory mutations (e.g. from reconciliation) survive across calls.
+   * so in-memory mutations (e.g. from component instance updating) survive
+   * across calls.
    *
    * Throws if called with the default language's langcode, since the default
    * translation is the base config — not an override.

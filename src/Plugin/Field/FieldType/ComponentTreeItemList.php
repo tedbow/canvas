@@ -571,12 +571,6 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
   }
 
   /**
-   * @param ExposedSlotDefinitions $exposed_slot_info
-   * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $subTreeItemList
-   * @return $this
-   */
-
-  /**
    * Reconciles all translations after component instances in this tree updated.
    *
    * After the default translation's component instances are updated to a new
@@ -584,13 +578,14 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
    * structural changes (added/removed props, new component version) to every
    * other translation of the host entity.
    *
-   * For content entities the translation's field items are updated in-memory.
-   * The caller is responsible for persisting the translations if needed (e.g.
-   * creating per-translation auto-saves).
+   * All entities with component trees are updated in-memory:
+   * - for content entities: each translation's component tree field items, via
+   *   ContentEntityBase::getTranslation()).
+   * - config entities: each translation's StagedLanguageConfigOverride, via
+   *   ComponentTreeConfigEntityBase::getTranslation()).
    *
-   * For config entities each translation's StagedLanguageConfigOverride is
-   * updated in-memory (via ComponentTreeConfigEntityBase::getTranslation()).
-   * The caller is responsible for persisting the staged overrides when needed.
+   * The caller is always responsible for persisting the translations if needed
+   * (e.g. creating per-translation auto-saves).
    *
    * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
    *   Keyed by component instance UUID. Each entry holds:
@@ -734,6 +729,11 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
     }
   }
 
+  /**
+   * @param ExposedSlotDefinitions $exposed_slot_info
+   * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $subTreeItemList
+   * @return $this
+   */
   public function injectSubTreeItemList(array $exposed_slot_info, ComponentTreeItemList $subTreeItemList): self {
     foreach ($exposed_slot_info as $slot_detail) {
       $parent_uuid = $slot_detail['component_uuid'] ?? NULL;
