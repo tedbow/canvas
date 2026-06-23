@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\canvas\Controller;
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
+use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\AssetLibrary;
 use Drupal\canvas\Entity\AutoSavePublishAwareInterface;
 use Drupal\canvas\Entity\BrandKit;
@@ -12,6 +13,7 @@ use Drupal\canvas\Entity\EntityConstraintViolationList;
 use Drupal\canvas\Entity\JavaScriptComponent;
 use Drupal\canvas\Exception\ConstraintViolationException;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
+use Drupal\canvas\Storage\ComponentTreeLoader;
 use Drupal\canvas\Validation\ConstraintPropertyPathTranslatorTrait;
 use Drupal\Core\Cache\CacheableJsonResponse;
 use Drupal\Core\Cache\CacheableMetadata;
@@ -62,6 +64,8 @@ final class ApiAutoSaveController extends ApiControllerBase {
     #[Autowire(service: 'logger.channel.canvas')]
     private readonly LoggerInterface $logger,
     private readonly AccountInterface $currentUser,
+    private readonly ComponentSourceManager $componentSourceManager,
+    private readonly ComponentTreeLoader $componentTreeLoader,
   ) {}
 
   private static function validateExpectedAutoSaves(array $expected_auto_saves, array $all_auto_saves): ?JsonResponse {
@@ -550,6 +554,14 @@ final class ApiAutoSaveController extends ApiControllerBase {
 
     foreach ($snapshots as $auto_save_entity) {
       \assert($auto_save_entity instanceof ContentEntityInterface);
+      // A snapshot may have been taken at an older component version: the
+      // editor drafted this translation, then the component evolved and only
+      // another translation was re-previewed, leaving this one behind.
+      // Reconcile it to the active version before applying it, so a translation
+      // is never published with deleted props or an outdated version. The
+      // snapshot holds only the edited translation, so reconciling updates that
+      // translation's own tree in place.
+      $this->componentSourceManager->updateComponentInstances($this->componentTreeLoader->load($auto_save_entity));
       $fields = $auto_save_entity->getFieldDefinitions();
       // The auto-save snapshot belongs to a specific translation. Apply the
       // changes onto that same translation of the stored entity, so editing

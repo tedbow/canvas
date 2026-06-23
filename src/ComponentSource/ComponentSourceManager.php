@@ -289,7 +289,13 @@ final class ComponentSourceManager extends DefaultPluginManager {
     if ($host instanceof TranslatableInterface && !$host->isDefaultTranslation()) {
       $field_name = $component_tree->getName();
       $default = $host->getUntranslated();
-      if (\is_string($field_name) && $default->hasField($field_name)) {
+      // Only redirect when getUntranslated() resolves to a distinct
+      // translation that actually reports as the default. A reconstructed
+      // single-translation entity (e.g. an auto-save snapshot stored with
+      // setDefaultTranslationEnforced(FALSE)) returns itself and keeps
+      // reporting non-default, so redirecting again would recurse forever;
+      // reconcile its own tree in place instead.
+      if ($default !== $host && $default->isDefaultTranslation() && \is_string($field_name) && $default->hasField($field_name)) {
         $default_tree = $default->get($field_name);
         \assert($default_tree instanceof ComponentTreeItemList);
         return $this->updateComponentInstances($default_tree);

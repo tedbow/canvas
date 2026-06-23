@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
-// cspell:ignore mundo Opcional Hola Página prueba Optionnel Etiqueta Española Hijo
+// cspell:ignore mundo Opcional Hola Página prueba Optionnel Etiqueta Española Hijo EDITADO
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
@@ -741,6 +741,93 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     yield 'both translations selected' => [['en', 'es']];
     yield 'only the default (en) translation selected' => [['en']];
     yield 'only the non-default (es) translation selected' => [['es']];
+  }
+
+  /**
+   * Publishing reconciles a translation auto-save left at an older version.
+   *
+   * A translation can carry an auto-save taken at the old component version:
+   * the editor drafted it, then the component evolved and only another
+   * translation was re-previewed. That stale snapshot must not be published
+   * as-is. Publishing reconciles it to the active version — preserving the
+   * editor's translated value, pruning deleted props, and bumping the version —
+   * so no translation is ever published outdated.
+   *
+   * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::post()
+   */
+  public function testPublishReconcilesStaleTranslationAutoSave(): void {
+    $this->config('system.theme')->set('default', 'stark')->save();
+    $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, AutoSaveManager::PUBLISH_PERMISSION]);
+
+    $page = $this->createPageWithTranslation();
+    $page_id = $page->id();
+    \assert($page_id !== NULL);
+
+    $auto_save_manager = $this->container->get(AutoSaveManager::class);
+    \assert($auto_save_manager instanceof AutoSaveManager);
+
+    // The editor drafts the ES translation at the original version, creating an
+    // ES auto-save before the component evolves.
+    $es_page = $page->getTranslation('es');
+    $es_tree = $es_page->getComponentTree();
+    $es_item = $es_tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    \assert($es_item !== NULL);
+    $es_item->setInput([
+      'required_text' => 'Hola mundo EDITADO',
+      'optional_text' => 'Opcional EDITADO',
+    ]);
+    $es_page->setComponentTree($es_tree->getValue());
+    $auto_save_manager->saveEntity($es_page);
+    self::assertFalse($auto_save_manager->getAutoSaveEntity($es_page)->isEmpty());
+
+    // The component evolves: optional_text removed, voice added → new version.
+    $this->removeAndAddProp();
+    $this->generateComponentConfig();
+
+    // Only EN is re-previewed, so only its auto-save is reconciled; the ES
+    // auto-save is left at the original version.
+    self::previewTranslations($page_id, ['en']);
+
+    // Sanity: the stored ES auto-save is still at the original version, carrying
+    // the now-deleted optional_text.
+    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
+    $page = Page::load($page_id);
+    \assert($page instanceof Page);
+    $stale = $auto_save_manager->getAutoSaveEntity($page->getTranslation('es'));
+    self::assertFalse($stale->isEmpty());
+    \assert($stale->entity instanceof Page);
+    $stale_item = $stale->entity->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($stale_item);
+    self::assertSame($this->originalVersion, $stale_item->getComponentVersion(), 'The ES auto-save remains at the original version before publishing.');
+    self::assertArrayHasKey('optional_text', $stale_item->getInputs() ?? []);
+
+    // Publish both translations together.
+    $all_auto_saves = $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE);
+    self::assertCount(2, $all_auto_saves);
+    $client_payload = [];
+    foreach ($all_auto_saves as $key => $entry) {
+      $client_payload[$key] = ['data_hash' => $entry['data_hash']];
+    }
+    $request = Request::create('/canvas/api/v0/auto-saves/publish', 'POST', content: (string) \json_encode($client_payload));
+    $publish_controller = \Drupal::classResolver(ApiAutoSaveController::class);
+    \assert($publish_controller instanceof ApiAutoSaveController);
+    $response = $publish_controller->post($request);
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+
+    // The published ES translation is reconciled: the editor's translated value
+    // survives, the deleted prop is gone, and the version matches the default.
+    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
+    $published = Page::load($page_id);
+    \assert($published instanceof Page);
+    $es_inputs = self::getInputs($published, 'es', self::COMPONENT_UUID);
+    self::assertNotNull($es_inputs);
+    self::assertSame('Hola mundo EDITADO', $es_inputs['required_text'], 'The translated value is preserved.');
+    self::assertArrayNotHasKey('optional_text', $es_inputs, 'The deleted prop must not be published.');
+
+    $en_version = $published->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID)?->getComponentVersion();
+    $es_version = $published->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID)?->getComponentVersion();
+    self::assertNotSame($this->originalVersion, $es_version, 'The ES translation is published at the new version, not the original.');
+    self::assertSame($en_version, $es_version, 'Both translations are published at the same component version.');
   }
 
   /**
