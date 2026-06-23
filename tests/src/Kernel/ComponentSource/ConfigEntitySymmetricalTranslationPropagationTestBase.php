@@ -73,17 +73,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // @see \Drupal\language\Config\LanguageConfigFactoryOverride
   ];
 
-  /**
-   * Writes a LanguageConfigOverride for the entity's Spanish translation.
-   *
-   * @param OptimizedSingleComponentInputArray $inputs
-   */
-  abstract protected function writeSpanishOverride(array $inputs): void;
-
-  /**
-   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
-   */
   #[DataProvider('providerPropagation')]
   public function testPropagation(
     string $setup_method,
@@ -93,10 +82,11 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     array $expected_remaining_override_inputs,
   ): void {
     // Write a Spanish override before the update.
-    $this->writeSpanishOverride([
+    $this->createComponentTreeTranslation('es', [
       'required_text' => 'Hola mundo',
       'optional_text' => 'opcional ES',
     ]);
+    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
     self::assertEntityIsValid($this->translatedConfigEntity);
 
     $this->{$setup_method}();
@@ -215,28 +205,26 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   }
 
   /**
-   * Tests that multiple language overrides are all reconciled on a single update.
+   * Tests that all LanguageConfigOverrides for the entity are updated together.
    *
    * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testMultipleLanguageOverridesReconciled(): void {
     ConfigurableLanguage::createFromLangcode('fr')->save();
 
-    $language_manager = \Drupal::languageManager();
-    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-
-    $this->writeSpanishOverride(['required_text' => 'Hola mundo', 'optional_text' => 'opcional ES']);
-
-    $fr_override = $language_manager->getLanguageConfigOverride('fr', $this->translatedConfigEntity->getConfigDependencyName());
-    \assert($fr_override instanceof LanguageConfigOverride);
-    $fr_override->set('component_tree', [
-      static::TRANSLATED_COMPONENT_INSTANCE_UUID => [
-        'inputs' => ['required_text' => 'Bonjour monde', 'optional_text' => 'optionnel FR'],
-      ],
+    $this->createComponentTreeTranslation('es', [
+      'required_text' => 'Hola mundo',
+      'optional_text' => 'opcional ES',
     ]);
-    $fr_override->save();
+    $this->createComponentTreeTranslation('fr', [
+      'required_text' => 'Bonjour monde',
+      'optional_text' => 'optionnel FR',
+    ]);
+    self::assertHasStoredTranslation('es');
+    self::assertHasStoredTranslation('fr');
+    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
+    self::assertEntityIsValid($this->translatedConfigEntity);
 
-    // Remove optional_text.
     $this->removeOptionalProp();
     $this->generateComponentConfig();
 
@@ -253,6 +241,9 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     $fr_stored = $this->translatedConfigEntity->getTranslation('fr')
       ->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
     self::assertSame(['required_text' => 'Bonjour monde'], $fr_stored);
+
+    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
+    self::assertEntityIsValid($this->translatedConfigEntity);
   }
 
   /**
@@ -277,7 +268,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    *    → LanguageConfigOverride::save()
    *
    * @return \Drupal\canvas\Entity\StagedLanguageConfigOverride
-   *   The he in-memory staged config translation, so callers can inspect the
+   *   The in-memory staged config translation, so callers can inspect the
    *   in-memory, pre-publish state if needed.
    */
   protected function updateAndPublishOverrides(string $assert_langcode = 'es'): StagedLanguageConfigOverride {
@@ -356,10 +347,12 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
    */
   public function testPublishWritesToLiveOverride(): void {
-    $this->writeSpanishOverride([
+    $this->createComponentTreeTranslation('es', [
       'required_text' => 'Hola mundo',
       'optional_text' => 'opcional ES',
     ]);
+    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
+    self::assertEntityIsValid($this->translatedConfigEntity);
 
     $this->removeOptionalProp();
     $this->generateComponentConfig();
@@ -390,10 +383,12 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    */
   public function testPublishDeletesEmptyOverride(): void {
     // Write an override that only has the two props that will both be deleted.
-    $this->writeSpanishOverride([
+    $this->createComponentTreeTranslation('es', [
       'required_text' => 'Hola mundo',
       'optional_text' => 'opcional ES',
     ]);
+    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
+    self::assertEntityIsValid($this->translatedConfigEntity);
 
     $this->removeBothProps();
     $this->generateComponentConfig();
@@ -420,10 +415,12 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testNonTranslatablePropNotStaged(): void {
-    $this->writeSpanishOverride([
+    $this->createComponentTreeTranslation('es', [
       'required_text' => 'Hola mundo',
       'optional_text' => 'opcional ES',
     ]);
+    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
+    self::assertEntityIsValid($this->translatedConfigEntity);
 
     // Add a new enum (non-translatable) optional prop.
     $props = $this->jsComponent->getProps();
@@ -449,6 +446,44 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // Existing translatable values are preserved.
     self::assertSame('Hola mundo', $inputs['required_text']);
     self::assertSame('opcional ES', $inputs['optional_text']);
+  }
+
+  private function getStoredTranslation(string $langcode): LanguageConfigOverride {
+    $language_manager = \Drupal::languageManager();
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
+    return $language_manager->getLanguageConfigOverride($langcode, $this->translatedConfigEntity->getConfigDependencyName());
+  }
+
+  protected function assertHasStoredTranslation(string $langcode): void {
+    $translation = $this->getStoredTranslation($langcode);
+    self::assertFalse($translation->isNew());
+    self::assertNotSame([], $translation->getRawData());
+  }
+
+  protected function assertHasNoStoredTranslation(string $langcode): void {
+    $translation = $this->getStoredTranslation($langcode);
+    self::assertTrue($translation->isNew());
+    self::assertSame([], $translation->getRawData());
+  }
+
+  /**
+   * Writes a LanguageConfigOverride with a translated component tree.
+   *
+   * @param string $langcode
+   * @param OptimizedSingleComponentInputArray $inputs
+   *   The symmetrical translation to store: translated component instance
+   *   inputs.
+   *
+   * @return void
+   */
+  protected function createComponentTreeTranslation(string $langcode, array $inputs): void {
+    self::assertHasNoStoredTranslation($langcode);
+    $this->getStoredTranslation($langcode)->set('component_tree', [
+      static::TRANSLATED_COMPONENT_INSTANCE_UUID => [
+        'inputs' => $inputs,
+      ],
+    ])->save();
+    self::assertHasStoredTranslation($langcode);
   }
 
 }

@@ -8,6 +8,7 @@ namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\ContentTemplate;
+use Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\language\Config\LanguageConfigOverride;
 use Drupal\language\ConfigurableLanguageManagerInterface;
@@ -24,6 +25,7 @@ use PHPUnit\Framework\Attributes\Group;
  * class verifies that reconciliation correctly handles that non-tree data.
  */
 #[CoversClass(ComponentSourceManager::class)]
+#[CoversClass(StagedLanguageConfigOverrideStorage::class)]
 #[CoversMethod(ComponentTreeItemList::class, 'reconcileTranslationsWithUpdatedItems')]
 #[CoversMethod(ComponentTreeItemList::class, 'reconcileConfigEntityTranslations')]
 #[Group('canvas')]
@@ -69,22 +71,6 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
   }
 
   /**
-   * {@inheritdoc}
-   */
-  protected function writeSpanishOverride(array $inputs): void {
-    $language_manager = \Drupal::languageManager();
-    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    $override = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
-    \assert($override instanceof LanguageConfigOverride);
-    $override->set('component_tree', [
-      static::TRANSLATED_COMPONENT_INSTANCE_UUID => [
-        'inputs' => $inputs,
-      ],
-    ]);
-    $override->save();
-  }
-
-  /**
    * Tests that exposed_slot label overrides survive tree reconciliation.
    *
    * ContentTemplate stores exposed_slots data in the LanguageConfigOverride
@@ -106,6 +92,8 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     // `component_uuid` and `slot_name` remain in the base config.
     $override->set('exposed_slots.test_slot.label', 'ranura de prueba');
     $override->save();
+    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
+    self::assertEntityIsValid($this->translatedConfigEntity);
 
     // Remove optional_text — this triggers reconciliation of component_tree.
     $this->removeOptionalProp();
