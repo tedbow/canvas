@@ -228,20 +228,14 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
    * {@inheritdoc}
    */
   public static function createFromClientSide(array $data): static {
-    return self::create($data);
+    throw new \LogicException('Not supported: read-only for the client side, mutable only on the server side.');
   }
 
   /**
    * {@inheritdoc}
    */
   public function updateFromClientSide(array $data): void {
-    // Prevent the client from changing the status. It should only be modified
-    // when staged changes are published. Also prevent the client from
-    // changing the langcode, config name or ID. Only modifying `data` is
-    // allowed.
-    if (\array_key_exists('data', $data)) {
-      parent::set('data', $data['data']);
-    }
+    throw new \LogicException('Not supported: read-only for the client side, mutable only on the server side.');
   }
 
   /**
