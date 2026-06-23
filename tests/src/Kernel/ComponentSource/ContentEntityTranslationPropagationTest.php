@@ -220,6 +220,64 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
+   * Tests that triggering from a non-default translation reconciles all of them.
+   *
+   * The editor's GET preview endpoint calls updateComponentInstances() for
+   * whichever language is being previewed. Under symmetric translation — the
+   * mode this fixture sets up via canvas_dev_translation, where component_version
+   * is shared — triggering from a non-default translation must still bring the
+   * default to the new version, keeping every translation on the same version.
+   *
+   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  public function testNonDefaultLanguageTriggersPropagation(): void {
+    $page = $this->createPageWithTranslation();
+
+    // A new required prop forces a value into every translation, so the
+    // default's convergence is observable in its inputs (the updater injects
+    // required-prop defaults into the source/default tree; optional ones are
+    // only added to non-default translations during reconciliation).
+    $this->addRequiredProp();
+    $this->generateComponentConfig();
+
+    // Trigger the update from the non-default (Spanish) translation's tree.
+    $page = Page::load($page->id());
+    \assert($page instanceof Page);
+    $es_page = $page->getTranslation('es');
+    $es_tree = $es_page->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($es_tree));
+
+    // The default (English) translation is reconciled too — not left behind on
+    // the old version without the new required prop.
+    $en_item = $es_page->getUntranslated()->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($en_item);
+    $en_inputs = $en_item->getInputs();
+    self::assertNotNull($en_inputs);
+    self::assertArrayHasKey('voice', $en_inputs);
+    self::assertSame('polite', $en_inputs['voice']);
+    self::assertSame('Hello world', $en_inputs['required_text']);
+    self::assertSame('Optional EN', $en_inputs['optional_text']);
+
+    // The Spanish translation keeps its translated values, and both translations
+    // end on the same new component version.
+    $es_item = $es_page->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($es_item);
+    $es_inputs = $es_item->getInputs();
+    self::assertNotNull($es_inputs);
+    self::assertArrayHasKey('voice', $es_inputs);
+    self::assertSame('Hola mundo', $es_inputs['required_text']);
+    self::assertNotSame($this->originalVersion, $es_item->getComponentVersion());
+    self::assertSame($en_item->getComponentVersion(), $es_item->getComponentVersion());
+
+    // Re-running once every translation is current is a no-op: nothing left to
+    // update, so no modification is reported.
+    self::assertFalse($manager->updateComponentInstances($es_tree));
+  }
+
+  /**
    * Tests that reconcileWithUpdatedDefaultTranslation() throws on default translation.
    *
    * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem::reconcileWithUpdatedDefaultTranslation()

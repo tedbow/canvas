@@ -17,6 +17,7 @@ use Drupal\Core\Cache\CacheBackendInterface;
 use Drupal\Core\Config\ConfigInstallerInterface;
 use Drupal\Core\DependencyInjection\ClassResolverInterface;
 use Drupal\Core\DrupalKernel;
+use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Plugin\DefaultPluginManager;
 use Drupal\Core\Update\UpdateKernel;
@@ -275,6 +276,26 @@ final class ComponentSourceManager extends DefaultPluginManager {
    *   TRUE if any component instance was updated, FALSE otherwise.
    */
   public function updateComponentInstances(ComponentTreeItemList $component_tree): bool {
+    // Source updates from the default translation so every translation —
+    // including the default — converges on the new version; when triggered from
+    // a non-default one (e.g. previewing it), redirect to the default tree and
+    // reconcile the rest (a no-op if it is already current). Relies on Canvas's
+    // symmetric translation (shared tree structure, incl. component_version),
+    // currently enforced by ComponentTreeSymmetricalTranslationConstraint.
+    // @todo When asymmetric translation lands (each translation owns its tree),
+    //   skip this redirect for asymmetrically translated fields. See
+    //   https://git.drupalcode.org/project/canvas/-/work_items/3571130.
+    $host = $component_tree->getParent() !== NULL ? $component_tree->getEntity() : NULL;
+    if ($host instanceof TranslatableInterface && !$host->isDefaultTranslation()) {
+      $field_name = $component_tree->getName();
+      $default = $host->getUntranslated();
+      if (\is_string($field_name) && $default->hasField($field_name)) {
+        $default_tree = $default->get($field_name);
+        \assert($default_tree instanceof ComponentTreeItemList);
+        return $this->updateComponentInstances($default_tree);
+      }
+    }
+
     $wasModified = FALSE;
     // Keyed by component instance UUID: snapshot of inputs/version before the
     // update, and inputs/version after, so symmetric translations can be
