@@ -19,6 +19,7 @@ use Drupal\language\ConfigurableLanguageManagerInterface;
  * @phpstan-import-type ComponentTreeItemArray from \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList
  * @phpstan-import-type ComponentTreeItemListArray from \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList
  * @phpstan-type ComponentTreeItemKeyedSequence array<string, ComponentTreeItemArray>
+ * @phpstan-type LanguageCode string
  */
 abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements ComponentTreeEntityInterface {
 
@@ -33,12 +34,18 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
   protected ?array $component_tree;
 
   /**
-   * Staged in-memory language config overrides, keyed by langcode.
+   * An array of entity translation metadata.
    *
-   * Populated lazily by getTranslation(). Repeated calls for the same langcode
-   * return the same instance, so in-memory mutations survive across calls.
+   * An associative array keyed by translation language code. Every value is a
+   * translation object (StagedLanguageConfigOverride). Populated lazily.
    *
-   * @var array<string, \Drupal\canvas\Entity\StagedLanguageConfigOverride>
+   * Repeated calls for the same langcode return the same instance, so in-memory
+   * mutations live as long as this object lives.
+   *
+   * @var array<LanguageCode, \Drupal\canvas\Entity\StagedLanguageConfigOverride>
+   *
+   * @see ::getTranslation()
+   * @see \Drupal\Core\Entity\ContentEntityBase::$translations
    */
   private array $stagedOverrides = [];
 
@@ -104,11 +111,11 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * {@inheritdoc}
    */
   public function set($property_name, $value) {
+    // Reset statically cached config translations: when this config entity is
+    // modified, its translations may have been modified in tandem.
+    $this->stagedOverrides = [];
     if ($property_name === 'component_tree') {
       $value = self::componentTreeInstancesInputsMustBeArrays($value);
-      // Clear cached staged overrides: the new tree may have different
-      // component instances, so any previously loaded translations are stale.
-      $this->stagedOverrides = [];
     }
     return parent::set($property_name, $value);
   }
@@ -193,6 +200,8 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    *   Language objects keyed by langcode.
    *
    * @todo Move to interface + trait, to allow any config entity type to be able to benefit from auto-saved-config-translation-changes in Canvas. For now, Canvas only allows translating config entities with component trees, so not yet relevant.
+   *
+   * @internal
    */
   public function getTranslationLanguages(bool $include_default = TRUE): array {
     $language_manager = \Drupal::languageManager();
@@ -219,7 +228,7 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
   }
 
   /**
-   * Returns a staged in-memory language config override for the given langcode.
+   * Returns a StagedLanguageConfigOverride for the given langcode.
    *
    * Analogous to TranslatableInterface::getTranslation(), but returns a
    * StagedLanguageConfigOverride entity rather than a translated entity object.
@@ -230,11 +239,25 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    * translation is the base config — not an override.
    *
    * @todo Move to interface + trait, to allow any config entity type to be able to benefit from auto-saved-config-translation-changes in Canvas. For now, Canvas only allows translating config entities with component trees, so not yet relevant.
+   *
+   * @return \Drupal\canvas\Entity\StagedLanguageConfigOverride
+   *   Either
+   *   - a stored StagedLanguageConfigOverride if one exists (note this object
+   *     can be modified by reference), ::isNew() will return FALSE
+   *   - a new one, constructed from LanguageConfigOverride (which itself could
+   *     be empty/new), ::isNew() will return TRUE
+   *
+   * @internal
    */
   public function getTranslation(string $langcode): StagedLanguageConfigOverride {
-    $language_manager = \Drupal::languageManager();
-    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    \assert($langcode !== $language_manager->getDefaultLanguage()->getId(), 'getTranslation() must not be called with the default langcode; the default translation is the base config.');
+    if ($langcode === $this->langcode) {
+      throw new \InvalidArgumentException(\sprintf('getTranslation() must not be called with the langcode of the default translation ("%s").', $this->langcode));
+    }
+
+    $language_manager = self::languageManager();
+    if (!$language_manager instanceof ConfigurableLanguageManagerInterface) {
+      throw new \InvalidArgumentException(\sprintf('getTranslation() must not be called on monolingual sites.'));
+    }
 
     if (isset($this->stagedOverrides[$langcode])) {
       return $this->stagedOverrides[$langcode];
@@ -242,9 +265,7 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
 
     $override = $language_manager->getLanguageConfigOverride($langcode, $this->getConfigDependencyName());
     \assert($override instanceof LanguageConfigOverride);
-    $this->stagedOverrides[$langcode] = $override->isNew()
-      ? StagedLanguageConfigOverride::createEmpty($langcode, $this->getConfigDependencyName())
-      : StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
+    $this->stagedOverrides[$langcode] = StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
     return $this->stagedOverrides[$langcode];
   }
 

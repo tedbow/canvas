@@ -84,21 +84,11 @@ final class CanvasConfigEntityTranslationsAreValidConstraintValidator extends Co
       // For ComponentTreeConfigEntityBase-powered config entities, read the
       // translation from the entity rather than from live config override
       // storage. ::getTranslation() returns a StagedLanguageConfigOverride,
-      // which:
-      // - if $value is an entity loaded from storage, will always match the
-      //   data in the stored LanguageConfigOverride
-      // - if $value is an entity loaded from auto-save, the translation will
-      //   always be the data that *started* from the stored
-      //   LanguageConfigOverride, but may have had its component instances
-      //   automatically updated to the active version
+      // which may have had its component instances automatically updated to the
+      // active version
       // @see \Drupal\canvas\ComponentSource\ComponentInstanceUpdaterInterface
       // @see \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
-      // This means that either way, the config translation to validate is that
-      // returned by ::getData().
       // @todo Refactor away the ComponentTreeConfigEntityBase checks in the future by checking for the presence of `type: canvas.component_tree` in the given config entity's config schema
-      // TRICKY: ::isNew() only indicates whether this has already been stored
-      // in the StagedLanguageConfigOverride's `storage` handler or not (FALSE
-      // meaning it has been stored).
       if ($value instanceof ComponentTreeConfigEntityBase) {
         $override_data = $value->getTranslation($langcode)->getData();
       }
