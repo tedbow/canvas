@@ -428,7 +428,7 @@ function canvas_post_update_0019_recompute_list_float_component_version_hashes(a
 /**
  * Installs the StagedLanguageConfigOverride config entity type.
  */
-function canvas_post_update__0020_install_staged_language_config_override_entity_type(array &$sandbox): void {
+function canvas_post_update_0020_install_staged_language_config_override_entity_type(array &$sandbox): void {
   $entity_definition_update_manager = \Drupal::service('entity.definition_update_manager');
   \assert($entity_definition_update_manager instanceof EntityDefinitionUpdateManagerInterface);
   $change_list = $entity_definition_update_manager->getChangeList();
