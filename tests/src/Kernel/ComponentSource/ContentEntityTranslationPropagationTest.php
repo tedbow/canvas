@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
-// cspell:ignore mundo Opcional Hola Página prueba Optionnel
+// cspell:ignore mundo Opcional Hola Página prueba Optionnel Etiqueta Española Hijo
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\Page;
@@ -38,6 +38,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   ];
 
   private const string COMPONENT_UUID = '11111111-1111-4111-8111-111111111111';
+  private const string SECOND_UUID = '22222222-2222-4222-8222-222222222222';
 
   /**
    * {@inheritdoc}
@@ -86,15 +87,12 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Gets the Spanish translation's inputs for the test component instance.
+   * Gets a translation's inputs for a given component instance.
    */
-  private static function getEsInputs(Page $page): ?array {
-    $es = $page->getTranslation('es');
-    $item = $es->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
-    if ($item === NULL) {
-      return NULL;
-    }
-    return $item->getInputs();
+  private static function getInputs(Page $page, string $langcode, string $uuid): ?array {
+    $translation = $page->getTranslation($langcode);
+    $item = $translation->getComponentTree()->getComponentTreeItemByUuid($uuid);
+    return $item?->getInputs();
   }
 
   /**
@@ -107,7 +105,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     string $setup_method,
     bool $expected_modified,
     ?string $new_key,
-    ?string $removed_key,
+    ?string $expected_optional,
   ): void {
     $page = $this->createPageWithTranslation();
 
@@ -120,18 +118,17 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $was_modified = $manager->updateComponentInstances($tree);
     self::assertSame($expected_modified, $was_modified);
 
-    $es_inputs = self::getEsInputs($page);
+    $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
     self::assertNotNull($es_inputs);
 
-    if ($removed_key !== NULL) {
-      self::assertArrayNotHasKey($removed_key, $es_inputs, "Deleted prop must be removed from translation.");
-    }
     if ($new_key !== NULL) {
       self::assertArrayHasKey($new_key, $es_inputs, "New prop must appear in translation.");
     }
-    // Existing translatable props must be preserved.
     if ($expected_modified) {
+      // The required value is always preserved; the optional value is its
+      // translated value, or NULL once the prop has been removed.
       self::assertSame('Hola mundo', $es_inputs['required_text'] ?? NULL, "Existing translatable prop must be preserved.");
+      self::assertSame($expected_optional, $es_inputs['optional_text'] ?? NULL, "Translated optional prop must match the expected post-update value.");
     }
   }
 
@@ -140,31 +137,31 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
       'setup_method' => 'addOptionalProp',
       'expected_modified' => TRUE,
       'new_key' => 'voice',
-      'removed_key' => NULL,
+      'expected_optional' => 'Opcional ES',
     ];
     yield 'New required prop added — translation gets example value' => [
       'setup_method' => 'addRequiredProp',
       'expected_modified' => TRUE,
       'new_key' => 'voice',
-      'removed_key' => NULL,
+      'expected_optional' => 'Opcional ES',
     ];
     yield 'Prop deleted — orphaned input removed from translation' => [
       'setup_method' => 'removeOptionalProp',
       'expected_modified' => TRUE,
       'new_key' => NULL,
-      'removed_key' => 'optional_text',
+      'expected_optional' => NULL,
     ];
     yield 'Unsafe prop type change — update blocked, translation unchanged' => [
       'setup_method' => 'changePropType',
       'expected_modified' => FALSE,
       'new_key' => NULL,
-      'removed_key' => NULL,
+      'expected_optional' => 'Opcional ES',
     ];
     yield 'Prop removed and another added — both changes propagated' => [
       'setup_method' => 'removeAndAddProp',
       'expected_modified' => TRUE,
       'new_key' => 'voice',
-      'removed_key' => 'optional_text',
+      'expected_optional' => NULL,
     ];
   }
 
@@ -206,7 +203,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     self::assertTrue($was_modified);
 
     // Spanish translation.
-    $es_inputs = self::getEsInputs($page);
+    $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
     self::assertNotNull($es_inputs);
     self::assertArrayNotHasKey('optional_text', $es_inputs);
     self::assertArrayHasKey('voice', $es_inputs);
@@ -235,6 +232,210 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     $this->expectException(\InvalidArgumentException::class);
     $en_item->reconcileWithUpdatedDefaultTranslation([], [], $this->originalVersion);
+  }
+
+  /**
+   * Tests that a component instance's per-translation label is preserved.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem::reconcileWithUpdatedDefaultTranslation()
+   */
+  public function testLabelPreservedDuringReconciliation(): void {
+    $page = $this->createPageWithTranslation();
+
+    $this->removeOptionalProp();
+    $this->generateComponentConfig();
+
+    // Give the component instance a distinct per-translation label. Set after
+    // the version bump so the tree resolves the updated component (touching the
+    // tree before would cache the component at its previous version).
+    $tree = $page->getComponentTree();
+    $en_item = $tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($en_item);
+    $en_item->setLabel('English Label');
+    $es_item = $page->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($es_item);
+    $es_item->setLabel('Etiqueta Española');
+
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($tree));
+
+    $es_item = $page->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($es_item);
+    self::assertSame('Etiqueta Española', $es_item->getLabel());
+
+    $en_item = $tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($en_item);
+    self::assertSame('English Label', $en_item->getLabel());
+  }
+
+  /**
+   * Tests that empty translation inputs only gain the new prop's default.
+   *
+   * Simulates content_translation's FieldTranslationSynchronizer creating a new
+   * delta with empty translatable columns: reconciliation must still inject the
+   * new prop's default without error.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem::reconcileWithUpdatedDefaultTranslation()
+   */
+  public function testEmptyTranslationInputsHandled(): void {
+    $page = $this->createPageWithTranslation();
+
+    $this->addOptionalProp();
+    $this->generateComponentConfig();
+
+    // Empty the Spanish inputs in-memory before reconciling.
+    $es_translation = $page->getTranslation('es');
+    $es_item = $es_translation->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($es_item);
+    $es_item->setInput([]);
+
+    $tree = $page->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($tree));
+
+    $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
+    self::assertNotNull($es_inputs);
+    self::assertArrayHasKey('voice', $es_inputs);
+    self::assertSame('polite', $es_inputs['voice']);
+  }
+
+  /**
+   * Tests that updating instances without any translations works and bumps version.
+   *
+   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
+   */
+  public function testNoTranslationsNoError(): void {
+    $page = Page::create([
+      'title' => 'No translations page',
+      'langcode' => 'en',
+      'components' => [
+        [
+          'uuid' => self::COMPONENT_UUID,
+          'component_id' => 'js.translatable_js_component',
+          'component_version' => $this->originalVersion,
+          'parent_uuid' => NULL,
+          'inputs' => ['required_text' => 'Hello'],
+        ],
+      ],
+    ]);
+    self::assertSame(SAVED_NEW, $page->save());
+    $page_id = $page->id();
+    \assert($page_id !== NULL);
+
+    $this->addOptionalProp();
+    $this->generateComponentConfig();
+
+    \Drupal::entityTypeManager()->getStorage('component')->resetCache();
+    $page = Page::load($page_id);
+    \assert($page instanceof Page);
+    $tree = $page->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($tree));
+
+    $en_item = $tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($en_item);
+    self::assertNotSame($this->originalVersion, $en_item->getComponentVersion());
+  }
+
+  /**
+   * Tests that multiple component instances in one tree are all reconciled.
+   *
+   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
+   */
+  public function testMultipleComponentInstancesReconciled(): void {
+    $page = Page::create([
+      'title' => 'Multi-instance page',
+      'langcode' => 'en',
+      'components' => [
+        [
+          'uuid' => self::COMPONENT_UUID,
+          'component_id' => 'js.translatable_js_component',
+          'component_version' => $this->originalVersion,
+          'parent_uuid' => NULL,
+          'inputs' => ['required_text' => 'First EN', 'optional_text' => 'First opt EN'],
+        ],
+        [
+          'uuid' => self::SECOND_UUID,
+          'component_id' => 'js.translatable_js_component',
+          'component_version' => $this->originalVersion,
+          'parent_uuid' => NULL,
+          'inputs' => ['required_text' => 'Second EN', 'optional_text' => 'Second opt EN'],
+        ],
+      ],
+    ]);
+    self::assertSame(SAVED_NEW, $page->save());
+
+    $translation = $page->addTranslation('es');
+    $translation->set('title', 'Página multi');
+    $translation->set('components', $page->get('components')->getValue());
+    $es_tree = $translation->getComponentTree();
+    $first = $es_tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    \assert($first !== NULL);
+    $first->setInput(['required_text' => 'Primero ES', 'optional_text' => 'Primero opt ES']);
+    $second = $es_tree->getComponentTreeItemByUuid(self::SECOND_UUID);
+    \assert($second !== NULL);
+    $second->setInput(['required_text' => 'Segundo ES', 'optional_text' => 'Segundo opt ES']);
+    $translation->save();
+
+    $page = Page::load($page->id());
+    \assert($page instanceof Page);
+
+    // Remove a prop to trigger an update on both instances.
+    $this->removeOptionalProp();
+    $this->generateComponentConfig();
+
+    $tree = $page->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($tree));
+
+    $first_es = self::getInputs($page, 'es', self::COMPONENT_UUID);
+    self::assertNotNull($first_es);
+    self::assertArrayNotHasKey('optional_text', $first_es);
+    self::assertSame('Primero ES', $first_es['required_text']);
+
+    $second_es = self::getInputs($page, 'es', self::SECOND_UUID);
+    self::assertNotNull($second_es);
+    self::assertArrayNotHasKey('optional_text', $second_es);
+    self::assertSame('Segundo ES', $second_es['required_text']);
+  }
+
+  /**
+   * Tests that an unsafe change blocks the update for every translation.
+   *
+   * Neither the default (EN) nor the non-default (ES) tree may change, and the
+   * shared component_version must stay put.
+   *
+   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
+   */
+  public function testUnsafeChangeBlocksBothLanguages(): void {
+    $page = $this->createPageWithTranslation();
+
+    $this->changePropType();
+    $this->generateComponentConfig();
+
+    $tree = $page->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertFalse($manager->updateComponentInstances($tree));
+
+    // EN inputs and version must be untouched.
+    $en_item = $tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($en_item);
+    $en_inputs = $en_item->getInputs();
+    self::assertNotNull($en_inputs);
+    self::assertSame('Hello world', $en_inputs['required_text']);
+    self::assertSame('Optional EN', $en_inputs['optional_text']);
+    self::assertSame($this->originalVersion, $en_item->getComponentVersion());
+
+    // ES inputs must be untouched.
+    $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
+    self::assertNotNull($es_inputs);
+    self::assertSame('Hola mundo', $es_inputs['required_text']);
+    self::assertSame('Opcional ES', $es_inputs['optional_text']);
   }
 
 }
