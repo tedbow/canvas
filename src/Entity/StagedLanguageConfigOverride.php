@@ -109,22 +109,6 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
   }
 
   /**
-   * {@inheritdoc}
-   *
-   * Returns FALSE in two cases where the in-memory instance must be treated as
-   * authoritative over live config storage:
-   * 1. AutoSaveManager loaded this from the KV auto-save store and called
-   *    enforceIsNew(FALSE) — it will be validated by LanguageConfigOverrideSchemaChecker
-   *    when published, so CanvasConfigEntityTranslationsAreValidConstraintValidator skips it.
-   * 2. ComponentTreeItemList::reconcileConfigEntityTranslations() mutated this
-   *    in-memory and called enforceIsNew(FALSE) — subsequent getTranslation()
-   *    calls must return this mutated instance, not re-read from storage.
-   */
-  public function isNew(): bool {
-    return parent::isNew();
-  }
-
-  /**
    * Returns whether this staged override has no data.
    *
    * Distinct from ConfigEntityBase::isNew() (which indicates whether the entity
@@ -136,17 +120,27 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
   }
 
   /**
-   * Creates a staged override from an existing live LanguageConfigOverride.
+   * Loads a staged override for a LanguageConfigOverride, or creates a new one.
    */
   public static function fromLanguageConfigOverride(LanguageConfigOverride $stored_override): self {
     $langcode = $stored_override->getLangcode();
     $config_name = $stored_override->getName();
-    return self::create([
-      'id' => "$langcode.$config_name",
+    $id = "$langcode.$config_name";
+
+    $existing = static::load($id);
+    if ($existing !== NULL) {
+      \assert($existing->isNew() === FALSE);
+      return $existing;
+    }
+
+    $new = self::create([
+      'id' => $id,
       'langcode' => $langcode,
       'config_name' => $config_name,
       'data' => $stored_override->getRawData(),
     ]);
+    \assert($new->isNew() === TRUE);
+    return $new;
   }
 
   /**

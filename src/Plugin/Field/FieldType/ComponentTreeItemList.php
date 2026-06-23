@@ -712,13 +712,6 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
       if (empty($component_tree_data)) {
         $staged->clearData('component_tree');
       }
-      // Mark as authoritative so that repeated getTranslation() calls on the
-      // config entity return this mutated instance rather than re-reading from
-      // live config storage (which would discard the in-memory reconciliation).
-      // The same sentinel is used by AutoSaveManager for KV-loaded overrides;
-      // here it extends to reconciliation-mutated overrides. Both are cases
-      // where the in-memory instance must win over live config.
-      $staged->enforceIsNew(FALSE);
     }
   }
 

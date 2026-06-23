@@ -234,17 +234,10 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
     \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
     \assert($langcode !== $language_manager->getDefaultLanguage()->getId(), 'getTranslation() must not be called with the default langcode; the default translation is the base config.');
 
-    // Only treat a cached entry as authoritative when isNew() === FALSE. That
-    // flag is set in two cases: (1) AutoSaveManager loaded the override from
-    // the KV store; (2) reconcileConfigEntityTranslations() mutated it
-    // in-memory. In both cases the cached instance must win over re-reading
-    // from live config storage. For ordinary live-config overrides
-    // (isNew() === TRUE) re-read each time: the live config may have changed
-    // (e.g. via config_translation UI), and staleness would silently mask
-    // validation of the new value.
-    if (isset($this->stagedOverrides[$langcode]) && !$this->stagedOverrides[$langcode]->isNew()) {
+    if (isset($this->stagedOverrides[$langcode])) {
       return $this->stagedOverrides[$langcode];
     }
+
     $override = $language_manager->getLanguageConfigOverride($langcode, $this->getConfigDependencyName());
     \assert($override instanceof LanguageConfigOverride);
     $this->stagedOverrides[$langcode] = $override->isNew()

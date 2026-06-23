@@ -316,10 +316,22 @@ final class ConfigEntityTranslationPropagationTest extends TranslationPropagatio
     // clears stagedOverrides, so a subsequent getTranslation() would re-read
     // un-pruned data from live config, discarding the reconciliation.
     $staged = $this->pageRegion->getTranslation($assert_langcode);
-    $auto_save_manager->saveEntity($staged);
+    self::assertTrue($staged->isNew());
+    $staged->save();
+
+    // Assert that both the retrieved-and-now-saved StagedLanguageConfigOverride
+    // and its origin (the config entity's ::getTranslation() method) convey
+    // that the StagedLanguageConfigOverride has been saved.
+    self::assertFalse($staged->isNew());
+    self::assertFalse($this->pageRegion->getTranslation($assert_langcode)->isNew());
 
     // Stage the updated base entity.
     $this->pageRegion->setComponentTree($tree->getValue());
+    self::assertFalse($this->pageRegion->getTranslation($assert_langcode)->isNew());
+    // Validate the StagedLanguageConfigOverride; it is minimally validated.
+    // @see canvas.schema.yml, `canvas.staged_language_config_override.*:data`.
+    self::assertEntityIsValid($staged);
+    self::assertEntityIsValid($this->pageRegion);
     $auto_save_manager->saveEntity($this->pageRegion);
 
     // Publish everything through the real auto-save publish controller.

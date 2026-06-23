@@ -8,12 +8,10 @@ use Drupal\canvas\AutoSaveEntity;
 use Drupal\canvas\Controller\ApiContentControllers;
 use Drupal\canvas\Entity\BrandKit;
 use Drupal\canvas\Entity\CanvasHttpApiEligibleConfigEntityInterface;
-use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Entity\StagedConfigUpdate;
-use Drupal\canvas\Entity\StagedLanguageConfigOverride;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_moderation\Plugin\Field\ModerationStateFieldItemList;
@@ -36,11 +34,9 @@ use Drupal\Core\Field\FieldItemInterface;
 use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Core\KeyValueStore\KeyValueFactoryInterface;
 use Drupal\Core\KeyValueStore\KeyValueStoreInterface;
-use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Session\AccountProxyInterface;
 use Drupal\Core\TypedData\PrimitiveInterface;
 use Drupal\Core\TypedData\TypedDataInterface;
-use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\path\Plugin\Field\FieldType\PathFieldItemList;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -107,8 +103,6 @@ class AutoSaveManager implements EventSubscriberInterface {
     KeyValueFactoryInterface $keyValueFactory,
     private readonly AccountProxyInterface $currentUser,
     private readonly TimeInterface $time,
-    #[Autowire(service: LanguageManagerInterface::class)]
-    private readonly LanguageManagerInterface $languageManager,
   ) {
     $this->autoSaveStore = $keyValueFactory->get(self::AUTO_SAVE_STORE);
     $this->formViolationsStore = $keyValueFactory->get(self::FORM_VIOLATIONS_STORE);
@@ -397,7 +391,6 @@ class AutoSaveManager implements EventSubscriberInterface {
     // the entity. Calling code that needs to reflect the fact that the entity
     // is not new should call ::enforceIsNew as required.
     $reconstructed = $this->entityTypeManager->getStorage($auto_save_data['entity_type'])->create($auto_save_data['data']);
-    $this->injectStagedLanguageConfigOverrides($reconstructed);
     $auto_save_entity = new AutoSaveEntity($reconstructed, $auto_save_data['data_hash'], $auto_save_data['client_id']);
     // Store in static cache to avoid the overhead of calling Entity::create
     // multiple times during layout preview rendering.
@@ -414,58 +407,7 @@ class AutoSaveManager implements EventSubscriberInterface {
     \assert(\is_string($entry['entity_type']));
     \assert(\is_array($entry['data']));
     $entity = $this->entityTypeManager->getStorage($entry['entity_type'])->create($entry['data'])->enforceIsNew(FALSE);
-    $this->injectStagedLanguageConfigOverrides($entity);
     return $entity;
-  }
-
-  /**
-   * Coalesces staged config translations into a ComponentTreeConfigEntityBase.
-   *
-   * For each language that has a StagedLanguageConfigOverride in the auto-save
-   * store, the corresponding translation is loaded via getTranslation() (which
-   * caches the object in the entity) and then mutated in place: its data is
-   * replaced with the auto-save data and enforceIsNew(FALSE) is called. This
-   * ensures getTranslation() returns the staged state rather than the live
-   * config, and that isNew() returns FALSE so the constraint validator can
-   * identify staged overrides and skip re-validation.
-   *
-   * This coalescing happens here in AutoSaveManager (i.e. at entity
-   * reconstruction time) rather than in ApiAutoSaveController::post() (i.e. at
-   * publish time) because it is non-destructive and safe to apply for any
-   * caller — not only publishing. Every consumer of getAutoSaveEntity() /
-   * getAllAutoSaveList() benefits from seeing a config entity with its staged
-   * translations already coalesced: preview, validation, conflict detection,
-   * and publishing all work correctly without having to call a separate
-   * coalescing step. Contrast with content entities, where coalescing requires
-   * loadUnchanged() to merge field-level changes, which is an inherently
-   * publish-specific operation that cannot happen at reconstruction time.
-   *
-   * @todo Expand to content entities when Canvas supports content entity
-   *   translation auto-saves (no @todo exists yet, but the architecture is
-   *   already designed with this in mind via ComponentTreeConfigEntityBase).
-   */
-  private function injectStagedLanguageConfigOverrides(EntityInterface $entity): void {
-    if (!$entity instanceof ComponentTreeConfigEntityBase) {
-      return;
-    }
-    if (!$this->languageManager instanceof ConfigurableLanguageManagerInterface) {
-      return;
-    }
-    $default_langcode = $this->languageManager->getDefaultLanguage()->getId();
-    $config_name = $entity->getConfigDependencyName();
-    foreach ($this->languageManager->getLanguages() as $langcode => $language) {
-      if ($langcode === $default_langcode) {
-        continue;
-      }
-      $key = StagedLanguageConfigOverride::ENTITY_TYPE_ID . ':' . $langcode . '.' . $config_name;
-      $data = $this->autoSaveStore->get($key);
-      if ($data !== NULL) {
-        \assert(\is_array($data['data']));
-        $translation = $entity->getTranslation($langcode);
-        $translation->enforceIsNew(FALSE);
-        $translation->set('data', $data['data']);
-      }
-    }
   }
 
   /**
@@ -538,9 +480,9 @@ class AutoSaveManager implements EventSubscriberInterface {
    * field-level changes onto the stored entity — a publish-specific operation
    * that must not run at reconstruction time. This method therefore only groups
    * the raw snapshots; the actual merge happens in the controller at publish
-   * time. Contrast with config entities, where coalescing is non-destructive
-   * and happens at reconstruction time inside
-   * injectStagedLanguageConfigOverrides().
+   * time.
+   * Contrast with config entities, where coalescing is non-destructive and
+   * happens at load time in ComponentTreeConfigEntityBase::getTranslation().
    *
    * @param array<string, array{data: array, owner: int, updated: int, entity_type: string, entity_id: string|int, label: string, original_hash: string, data_hash: string, client_id: ?string, langcode: ?string, entity: ?EntityInterface}> $auto_saves
    *   A subset of the getAllAutoSaveList() result, already filtered to the
