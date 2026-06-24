@@ -514,7 +514,7 @@ class AutoSaveManager implements EventSubscriberInterface {
    * Contrast with config entities, where coalescing is non-destructive and
    * happens at load time in ComponentTreeConfigEntityBase::getTranslation().
    *
-   * @param array<string, array{data: array, owner: int, updated: int, entity_type: string, entity_id: string|int, label: string, original_hash: string, data_hash: string, client_id: ?string, langcode: ?string, entity: ?EntityInterface}> $auto_saves
+   * @param array<string, AutoSaveEntry> $auto_saves
    *   A subset of the getAllAutoSaveList() result, already filtered to the
    *   entries that should be published, with 'entity' populated.
    *
