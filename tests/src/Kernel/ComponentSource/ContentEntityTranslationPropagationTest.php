@@ -685,9 +685,22 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     // The component evolves: optional_text removed, voice added → new version.
     $this->removeAndAddProp();
 
-    // Only EN is re-previewed, so only its auto-save is reconciled; the ES
-    // auto-save is left at the original version.
-    self::previewTranslation($page_id, 'en');
+    // Build the default (EN) auto-save at the new version WITHOUT touching the
+    // ES auto-save. Previewing any translation now reconciles and persists
+    // *every* translation's auto-save (see ::previewTranslation()), which would
+    // bump the stale ES auto-save just created — the opposite of what this test
+    // needs. So run the updater on a freshly loaded default translation and save
+    // only it; the ES auto-save entry is left untouched, i.e. stale. This also
+    // models the real path to a stale per-translation auto-save: a direct write
+    // (e.g. via TMGMT) that never goes through Canvas' preview.
+    \Drupal::entityTypeManager()->getStorage(Component::ENTITY_TYPE_ID)->resetCache();
+    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
+    $default_page = Page::load($page_id);
+    \assert($default_page instanceof Page);
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    self::assertTrue($manager->updateComponentInstances($default_page->getComponentTree()));
+    $auto_save_manager->saveEntity($default_page);
 
     // Sanity: the stored ES auto-save is still at the original version, carrying
     // the now-deleted optional_text.
