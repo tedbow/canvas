@@ -11,6 +11,7 @@ use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Controller\ApiAutoSaveController;
 use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\StagedLanguageConfigOverride;
+use Drupal\Core\Access\AccessResultReasonInterface;
 use Drupal\language\Config\LanguageConfigOverride;
 use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\language\Entity\ConfigurableLanguage;
@@ -408,6 +409,78 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertSame(
       ['required_text' => 'Hola editado'],
       $live->get("component_tree.$uuid.inputs"),
+    );
+  }
+
+  /**
+   * Tests StagedLanguageConfigOverride access delegates to its base entity.
+   *
+   * create/update/delete defer to the base config entity's `update` access;
+   * `view` defers to Canvas UI access. Access is forbidden when the target
+   * config entity does not exist or is not a config entity.
+   *
+   * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideAccessControlHandler
+   * @legacy-covers \Drupal\canvas\EntityHandlers\StagedConfigEntityAccessControlTrait
+   */
+  public function testStagedOverrideAccess(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
+    $admin_permission = $this->entity->getEntityType()->getAdminPermission();
+    \assert(\is_string($admin_permission));
+    $config_name = $this->entity->getConfigDependencyName();
+    $entity_type_id = $this->entity->getEntityTypeId();
+
+    $handler = $this->container->get('entity_type.manager')
+      ->getAccessControlHandler(StagedLanguageConfigOverride::ENTITY_TYPE_ID);
+
+    // An override targeting the existing (saved) base config entity.
+    $override = StagedLanguageConfigOverride::create([
+      'id' => "es.$config_name",
+      'langcode' => 'es',
+      'config_name' => $config_name,
+      'data' => [],
+    ]);
+
+    // A user who can update the base config entity can create/update/delete its
+    // overrides.
+    $editor = $this->createUser([$admin_permission]);
+    self::assertNotFalse($editor);
+    foreach (['update', 'delete'] as $op) {
+      self::assertTrue($handler->access($override, $op, $editor), "Editor can $op the override.");
+    }
+    self::assertTrue($handler->createAccess(NULL, $editor, ['config_name' => $config_name]), 'Editor can create an override for an editable base.');
+
+    // A user with no permission cannot view, update, delete or create it.
+    $stranger = $this->createUser([]);
+    self::assertNotFalse($stranger);
+    foreach (['view', 'update', 'delete'] as $op) {
+      self::assertFalse($handler->access($override, $op, $stranger), "Stranger cannot $op the override.");
+    }
+    self::assertFalse($handler->createAccess(NULL, $stranger, ['config_name' => $config_name]), 'Stranger cannot create an override.');
+
+    // Forbidden: the override targets a config entity of the right type that
+    // does not exist.
+    [$prefix_a, $prefix_b] = \explode('.', $config_name, 3);
+    $ghost_config_name = "$prefix_a.$prefix_b.does_not_exist";
+    $ghost = StagedLanguageConfigOverride::create([
+      'id' => "es.$ghost_config_name",
+      'langcode' => 'es',
+      'config_name' => $ghost_config_name,
+      'data' => [],
+    ]);
+    $ghost_result = $handler->access($ghost, 'update', $editor, TRUE);
+    self::assertFalse($ghost_result->isAllowed());
+    self::assertSame(
+      "Target configuration entity 'does_not_exist' of type '$entity_type_id' does not exist.",
+      $ghost_result instanceof AccessResultReasonInterface ? $ghost_result->getReason() : '',
+    );
+
+    // Forbidden: a config name that is not a config entity at all. Reachable
+    // only via createAccess(); the entity constructor rejects such names.
+    $unsupported = $handler->createAccess(NULL, $editor, ['config_name' => 'system.site'], TRUE);
+    self::assertFalse($unsupported->isAllowed());
+    self::assertSame(
+      "Unsupported configuration object 'system.site'.",
+      $unsupported instanceof AccessResultReasonInterface ? $unsupported->getReason() : '',
     );
   }
 
