@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
-// cspell:ignore Hola mundo opcional optionnel
+// cspell:ignore Hola mundo opcional optionnel editado
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
@@ -310,6 +310,123 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     \assert($live instanceof LanguageConfigOverride);
     self::assertTrue($live->isNew(), 'Live override must be deleted when staged override is empty.');
     self::assertSame([], $live->getRawData());
+  }
+
+  /**
+   * Tests a pending translation draft is reconciled at a bump, then published.
+   *
+   * A translator drafts an edited override (an unpublished `required_text`),
+   * then the component evolves and `optional_text` is removed. When the base is
+   * next updated, reconciliation must act on that *pending auto-save draft* —
+   * not on live config — so the editor's value survives and the deleted prop is
+   * pruned. getTranslation() is auto-save-aware, which makes the bump-time
+   * updater operate on the real draft.
+   *
+   * Symmetric config translations also publish atomically: the base draft and
+   * its per-language override draft share a component version, so selecting
+   * either one for publication pulls in the whole group. The published live
+   * override is therefore identical whichever subset the client selects.
+   *
+   * @param string[] $select
+   *   Which group members the client puts in the publish request: 'base',
+   *   'override', or both.
+   *
+   * @legacy-covers \Drupal\canvas\Entity\ComponentTreeConfigEntityBase::getTranslation()
+   * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::post()
+   */
+  #[DataProvider('providerPublishGroupSelection')]
+  public function testPublishReconcilesStaleStagedOverride(array $select): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
+    // Set up a publish-capable user up front, so every auto-save entry created
+    // below is owned by the user that later publishes them.
+    $admin_permission = $this->entity->getEntityType()->getAdminPermission();
+    \assert(\is_string($admin_permission));
+    $this->setUpCurrentUser([], [$admin_permission, AutoSaveManager::PUBLISH_PERMISSION]);
+
+    // Live ES override at the original component version.
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
+    self::assertEntityIsValid($this->entity);
+
+    $auto_save_manager = $this->container->get(AutoSaveManager::class);
+    \assert($auto_save_manager instanceof AutoSaveManager);
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    $uuid = static::TRANSLATED_COMPONENT_INSTANCE_UUID;
+
+    // A pending ES draft edits required_text (not yet in live config) while the
+    // component still has optional_text. It is staged to auto-save.
+    $draft = $this->entity->getTranslation('es');
+    $draft->setData("component_tree.$uuid.inputs", [
+      'required_text' => 'Hola editado',
+      'optional_text' => 'opcional ES',
+    ]);
+    $draft->save();
+
+    // The component evolves: optional_text is removed.
+    $this->removeOptionalProp();
+
+    // Reconcile and re-stage the base + override drafts. No controller persists
+    // config translation overrides to auto-save yet (the editor flow for that is
+    // not built), so the test performs the reconciliation that flow will do:
+    // updateComponentInstances() prunes optional_text from the pending draft
+    // while keeping the editor's required_text (getTranslation() is auto-save-
+    // aware), and both reconciled drafts are written back to auto-save.
+    $base = $this->container->get('entity_type.manager')
+      ->getStorage($this->entity->getEntityTypeId())
+      ->loadUnchanged((string) $this->entity->id());
+    \assert($base instanceof ComponentTreeConfigEntityBase);
+    $tree = $base->getComponentTree();
+    $manager->updateComponentInstances($tree);
+    $reconciled = $base->getTranslation('es');
+    self::assertSame(
+      ['required_text' => 'Hola editado'],
+      $reconciled->getData("component_tree.$uuid.inputs"),
+      'The bump must reconcile the pending draft: editor value kept, deleted prop pruned.',
+    );
+    // Stage the override before setComponentTree() clears the in-memory cache.
+    $reconciled->save();
+    $base->setComponentTree($tree->getValue());
+    $auto_save_manager->saveEntity($base);
+
+    // Both the base and the override draft are now in auto-save.
+    $all = $auto_save_manager->getAllAutoSaveList(FALSE, FALSE);
+    $member_keys = [
+      'base' => AutoSaveManager::getAutoSaveKey($base),
+      'override' => AutoSaveManager::getAutoSaveKey($draft),
+    ];
+    self::assertSame(\array_values($member_keys), \array_keys($all));
+
+    // Publish only the selected member(s); the group must publish atomically.
+    $payload = [];
+    foreach ($select as $which) {
+      $key = $member_keys[$which];
+      $payload[$key] = ['data_hash' => $all[$key]['data_hash']];
+    }
+    $request = Request::create('/canvas/api/v0/auto-saves/publish', 'POST', content: (string) \json_encode($payload));
+    $controller = \Drupal::classResolver(ApiAutoSaveController::class);
+    \assert($controller instanceof ApiAutoSaveController);
+    $response = $controller->post($request);
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+
+    // No auto-saves remain: the whole group was published, not just the
+    // selected member.
+    self::assertSame([], $auto_save_manager->getAllAutoSaveList(FALSE, FALSE));
+
+    // The published live override reflects the reconciled draft: the editor's
+    // required_text survives and the deleted optional_text is gone — identical
+    // whichever group member the client selected.
+    $live = $this->getStoredTranslation('es');
+    self::assertFalse($live->isNew());
+    self::assertSame(
+      ['required_text' => 'Hola editado'],
+      $live->get("component_tree.$uuid.inputs"),
+    );
+  }
+
+  public static function providerPublishGroupSelection(): \Generator {
+    yield 'base and override selected' => [['base', 'override']];
+    yield 'only the base selected' => [['base']];
+    yield 'only the override selected' => [['override']];
   }
 
   /**
