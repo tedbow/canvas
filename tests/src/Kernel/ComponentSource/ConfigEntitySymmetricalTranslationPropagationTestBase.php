@@ -15,6 +15,7 @@ use Drupal\language\Config\LanguageConfigOverride;
 use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\Tests\canvas\Traits\DataProviderWithComponentTreeTrait;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -312,6 +313,91 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     \assert($live instanceof LanguageConfigOverride);
     self::assertTrue($live->isNew(), 'Live override must be deleted when staged override is empty.');
     self::assertSame([], $live->getRawData());
+  }
+
+  /**
+   * Tests that discarding any part of the pending set discards the whole group.
+   *
+   * A config entity's draft and its per-language StagedLanguageConfigOverride
+   * drafts are one atomic set of pending changes. Discarding the base config
+   * entity, or any single staged override, must discard the base draft and
+   * every override draft for that config entity, so none is left orphaned.
+   *
+   * @param string $entry_point
+   *   Which auto-save is passed to the discard endpoint: 'base', or a langcode
+   *   whose staged override is discarded.
+   *
+   * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::discardConfigTranslationGroup()
+   * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::groupConfigEntityAutoSaves()
+   */
+  #[DataProvider('providerDiscardEntryPoint')]
+  public function testDiscardingDiscardsWholeConfigTranslationGroup(string $entry_point): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
+    ConfigurableLanguage::createFromLangcode('fr')->save();
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
+    $this->createComponentTreeTranslation('fr', [
+      'required_text' => 'Bonjour monde',
+      'optional_text' => 'optionnel FR',
+    ]);
+    self::assertEntityIsValid($this->entity);
+
+    $this->removeOptionalProp();
+    $this->generateComponentConfig();
+
+    $tree = $this->entity->getComponentTree();
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+    $manager->updateComponentInstances($tree);
+
+    // Stage both override drafts BEFORE setComponentTree() clears stagedOverrides.
+    $es_staged = $this->entity->getTranslation('es');
+    $es_staged->save();
+    $fr_staged = $this->entity->getTranslation('fr');
+    $fr_staged->save();
+
+    // Stage the base config-entity draft too.
+    $this->entity->setComponentTree($tree->getValue());
+    $auto_save_manager = $this->container->get(AutoSaveManager::class);
+    \assert($auto_save_manager instanceof AutoSaveManager);
+    $auto_save_manager->saveEntity($this->entity);
+
+    // All three drafts are now in auto-save.
+    self::assertFalse($auto_save_manager->getAutoSaveEntity($this->entity)->isEmpty(), 'Base draft must exist before discarding.');
+    self::assertFalse($auto_save_manager->getAutoSaveEntity($es_staged)->isEmpty(), 'ES override draft must exist before discarding.');
+    self::assertFalse($auto_save_manager->getAutoSaveEntity($fr_staged)->isEmpty(), 'FR override draft must exist before discarding.');
+
+    // Discard via the requested entry point: the base, or one staged override.
+    $target = match ($entry_point) {
+      'base' => $this->entity,
+      'es' => $es_staged,
+      default => throw new \InvalidArgumentException("Unknown entry point: $entry_point"),
+    };
+    $controller = \Drupal::classResolver(ApiAutoSaveController::class);
+    \assert($controller instanceof ApiAutoSaveController);
+    $response = $controller->delete($target);
+    self::assertSame(Response::HTTP_NO_CONTENT, $response->getStatusCode(), (string) $response->getContent());
+
+    // The whole atomic set is discarded, whichever entry point was used.
+    self::assertTrue($auto_save_manager->getAutoSaveEntity($this->entity)->isEmpty(), 'Base draft must be discarded.');
+    self::assertTrue($auto_save_manager->getAutoSaveEntity($es_staged)->isEmpty(), 'ES override draft must be discarded.');
+    self::assertTrue($auto_save_manager->getAutoSaveEntity($fr_staged)->isEmpty(), 'FR override draft must be discarded.');
+
+    // The live config is untouched: discarding throws away the reconciliation
+    // drafts, so each live override keeps its original (un-pruned) translation.
+    $expected = [
+      'es' => self::ES_TRANSLATION_INPUTS,
+      'fr' => ['required_text' => 'Bonjour monde', 'optional_text' => 'optionnel FR'],
+    ];
+    foreach ($expected as $langcode => $inputs) {
+      $live = $this->getStoredTranslation($langcode);
+      self::assertFalse($live->isNew(), "Live $langcode override must survive the discard.");
+      self::assertSame($inputs, $live->get('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs'), "Live $langcode override must keep its original translation.");
+    }
+  }
+
+  public static function providerDiscardEntryPoint(): \Generator {
+    yield 'discard via the base config entity' => ['base'];
+    yield 'discard via a staged override' => ['es'];
   }
 
   /**

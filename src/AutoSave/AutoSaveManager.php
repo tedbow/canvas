@@ -8,10 +8,12 @@ use Drupal\canvas\AutoSaveEntity;
 use Drupal\canvas\Controller\ApiContentControllers;
 use Drupal\canvas\Entity\BrandKit;
 use Drupal\canvas\Entity\CanvasHttpApiEligibleConfigEntityInterface;
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Entity\StagedConfigUpdate;
+use Drupal\canvas\Entity\StagedLanguageConfigOverride;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_moderation\Plugin\Field\ModerationStateFieldItemList;
@@ -624,6 +626,67 @@ class AutoSaveManager implements EventSubscriberInterface {
         ...\array_column($entity->get($field_name)->getValue(), 'uuid'),
       ], []);
       $this->componentInstanceFormViolationsStore->deleteMultiple(\array_unique($component_uuids));
+    }
+  }
+
+  /**
+   * Returns the staged config-translation drafts owned by a config entity.
+   *
+   * A ComponentTreeConfigEntityBase and its per-language
+   * StagedLanguageConfigOverride drafts are separate auto-save entries that
+   * must be discarded (and, eventually, published) together: each override's
+   * entity ID is "{langcode}.{config_name}", so they are matched by config
+   * name. This is the config-translation sibling of
+   * ::groupContentEntityAutoSaves(), which groups a content entity's
+   * per-translation snapshots.
+   *
+   * @param \Drupal\canvas\Entity\ComponentTreeConfigEntityBase $entity
+   *   The config entity whose staged translation drafts to collect.
+   *
+   * @return \Drupal\canvas\Entity\StagedLanguageConfigOverride[]
+   *   The staged override drafts currently in auto-save for $entity.
+   */
+  public function groupConfigEntityAutoSaves(ComponentTreeConfigEntityBase $entity): array {
+    $suffix = '.' . $entity->getConfigDependencyName();
+    /** @var array<string, AutoSaveEntry> $entries */
+    $entries = $this->autoSaveStore->getAll();
+    $matches = \array_filter(
+      $entries,
+      static fn (array $entry): bool =>
+        ($entry['entity_type'] ?? NULL) === StagedLanguageConfigOverride::ENTITY_TYPE_ID
+        && \is_string($entry['entity_id'] ?? NULL)
+        && \str_ends_with((string) $entry['entity_id'], $suffix),
+    );
+    return \array_values(\array_map(function (array $entry): StagedLanguageConfigOverride {
+      $override = $this->createEntityFromAutoSaveEntry($entry);
+      \assert($override instanceof StagedLanguageConfigOverride);
+      return $override;
+    }, $matches));
+  }
+
+  /**
+   * Discards a config entity's entire pending-changes set.
+   *
+   * A ComponentTreeConfigEntityBase draft and its per-language
+   * StagedLanguageConfigOverride drafts form one atomic set of pending changes.
+   * Given either the config entity or one of its overrides, this discards the
+   * base draft and every override draft, so none is left orphaned.
+   *
+   * @param \Drupal\Core\Entity\EntityInterface $entity
+   *   The config entity, or one of its staged language config overrides.
+   */
+  public function discardConfigTranslationGroup(EntityInterface $entity): void {
+    $base = match (TRUE) {
+      $entity instanceof ComponentTreeConfigEntityBase => $entity,
+      $entity instanceof StagedLanguageConfigOverride => $this->configManager->loadConfigEntityByName($entity->getName()),
+      default => NULL,
+    };
+    if (!$base instanceof ComponentTreeConfigEntityBase) {
+      return;
+    }
+    $this->delete($base);
+    foreach ($this->groupConfigEntityAutoSaves($base) as $override) {
+      $this->delete($override);
     }
   }
 

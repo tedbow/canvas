@@ -402,6 +402,16 @@ final class ApiAutoSaveController extends ApiControllerBase {
       return new JsonResponse(data: ['error' => 'No auto-save data found for this entity.'], status: Response::HTTP_NOT_FOUND);
     }
     $this->autoSaveManager->delete($entity);
+    // A config entity's draft and its per-language StagedLanguageConfigOverride
+    // drafts form one atomic set of pending changes. Discarding any of them
+    // discards them all, so none is left orphaned.
+    //
+    // This lives on the discard endpoint, not in AutoSaveManager::delete():
+    // that low-level delete also runs during publish cleanup (::post() deletes
+    // each published auto-save) and on hook_entity_delete, where cascading
+    // would discard staged overrides mid-publish.
+    // @see \Drupal\canvas\Hook\AutoSaveHooks::entityDelete()
+    $this->autoSaveManager->discardConfigTranslationGroup($entity);
     return new JsonResponse(data: ['message' => 'Auto-save data deleted successfully.'], status: Response::HTTP_NO_CONTENT);
   }
 
