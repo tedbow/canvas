@@ -199,7 +199,20 @@ final class ApiLayoutController {
           // @todo https://www.drupal.org/i/3498525 should generalize this to all eligible content entity types (aka FieldableEntityInterface)
           $entity->setComponentTree($items->getValue());
         }
-        $this->autoSaveManager->saveEntity($entity);
+        // This called ::updateComponentInstances(), that means all symmetrical
+        // translations (for content or config entities) have had their
+        // component instances updated, too. They must remain in sync, so also
+        // save the updated translations.
+        // @see ADR #13, decision 4: propagation is in-memory only.
+        $this->autoSaveManager->saveEntity($entity instanceof ContentEntityInterface
+          // For content entities $entity may be a non-default translation.
+          ? $entity->getUntranslated()
+          // For config entities, $entity is always the default translation.
+          : $entity
+        );
+        foreach ($entity->getTranslationLanguages(include_default: FALSE) as $language) {
+          $this->autoSaveManager->saveEntity($entity->getTranslation($language->getId()));
+        }
       }
 
       $built = $items->getClientSideRepresentation($preview_entity);
