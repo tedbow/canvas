@@ -11,6 +11,7 @@ use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentInterface;
 use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\VersionedConfigEntityBase;
+use Drupal\canvas\Plugin\DataType\ComponentInputs;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\Component\Assertion\Inspector;
@@ -332,7 +333,7 @@ final class ComponentSourceManager extends DefaultPluginManager {
     }
     elseif ($host instanceof ComponentTreeConfigEntityBase) {
       foreach ($host->getTranslationLanguages(include_default: FALSE) as $langcode => $language) {
-        if (self::updateConfigEntityTranslation($host, $langcode, $component_tree)) {
+        if ($this->updateConfigEntityTranslation($host, $langcode)) {
           $wasModified = TRUE;
         }
       }
@@ -377,69 +378,70 @@ final class ComponentSourceManager extends DefaultPluginManager {
   /**
    * Updates a single config entity translation's sparse override.
    *
-   * Config entity translations are sparse: the LanguageConfigOverride carries
-   * only the subset of translatable inputs the translator set. After the base
-   * config is updated (default translation tree), the sparse override must be
-   * adjusted to stay consistent: props deleted from the new version are pruned.
-   * New props are NOT injected into the override — they live only in the base
-   * config and take their default-translation values at render time.
+   * Rebuilds the full V1 translated tree (base config + sparse override),
+   * runs the same updater on it, then re-derives the sparse override using
+   * translatability classification:
+   *  - orphaned props (deleted in new version) are pruned by the updater
+   *  - props that flipped translatable→non-translatable are dropped
+   *  - new props are never injected (absent from $prior → filtered out)
    *
    * @param \Drupal\canvas\Entity\ComponentTreeConfigEntityBase $entity
    *   The config entity whose default translation was just updated.
    * @param string $langcode
    *   The non-default language code whose override to update.
-   * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $updated_tree
-   *   The already-updated default translation tree. Used to read the current
-   *   valid prop keys per instance (the entity's property array is still
-   *   stale).
    *
    * @return bool
    *   TRUE if the staged override was changed.
    */
-  private static function updateConfigEntityTranslation(ComponentTreeConfigEntityBase $entity, string $langcode, ComponentTreeItemList $updated_tree): bool {
+  private function updateConfigEntityTranslation(ComponentTreeConfigEntityBase $entity, string $langcode): bool {
     $staged = $entity->getTranslation($langcode);
-
-    // Build a UUID → valid-keys map from the already-updated default tree.
-    $valid_keys_by_uuid = [];
-    foreach ($updated_tree as $item) {
-      \assert($item instanceof ComponentTreeItem);
-      $valid_keys_by_uuid[$item->getUuid()] = \array_fill_keys(\array_keys($item->getInputs() ?? []), NULL);
-    }
-
-    $staged_dirty = FALSE;
-    foreach ($valid_keys_by_uuid as $uuid => $valid_keys_after) {
-      $stored = $staged->getData("component_tree.$uuid.inputs");
-      if (!\is_array($stored) || empty($stored)) {
-        continue;
-      }
-
-      // Remove inputs for props deleted in the new version.
-      $reconciled = \array_intersect_key($stored, $valid_keys_after);
-
-      if ($reconciled === $stored) {
-        continue;
-      }
-
-      if (empty($reconciled)) {
-        $staged->clearData("component_tree.$uuid");
-      }
-      else {
-        $staged->setData("component_tree.$uuid.inputs", $reconciled);
-      }
-      $staged_dirty = TRUE;
-    }
-
-    if (!$staged_dirty) {
+    // @see \Drupal\canvas\Entity\ComponentTreeConfigEntityBase::$component_tree
+    $prior = $staged->getData('component_tree');
+    if (!\is_array($prior) || $prior === []) {
       return FALSE;
     }
 
-    // Prune empty component_tree entry if all UUIDs were cleared.
-    $component_tree_data = $staged->getData('component_tree');
-    if (empty($component_tree_data)) {
-      $staged->clearData('component_tree');
+    // Rebuild the full V1 translated tree and run the updater on it.
+    $full = $entity->getTranslatedComponentTree($langcode);
+    if (!$this->runUpdatersOnComponentTreeItemList($full)) {
+      return FALSE;
     }
 
-    return TRUE;
+    // Re-derive the sparse override: keep only keys that were translated
+    // before, are still translatable in the new version, and still exist
+    // post-update. array_intersect_key with three arrays: drops orphans
+    // (absent from $item_inputs), now-non-translatable keys (absent from
+    // $translatable), and new props (absent from $prior_inputs).
+    $dirty = FALSE;
+    foreach ($full as $item) {
+      \assert($item instanceof ComponentTreeItem);
+      $uuid = $item->getUuid();
+      $prior_inputs = $prior[$uuid]['inputs'] ?? NULL;
+      if (!\is_array($prior_inputs) || $prior_inputs === []) {
+        continue;
+      }
+      $inputs_typed_data = $item->get('inputs');
+      \assert($inputs_typed_data instanceof ComponentInputs);
+      $translatable = \array_flip($inputs_typed_data->getTranslatableInputKeys());
+      $item_inputs = $item->getInputs() ?? [];
+      $new = \array_intersect_key($item_inputs, $translatable, $prior_inputs);
+
+      if ($new === $prior_inputs) {
+        continue;
+      }
+      if ($new === []) {
+        $staged->clearData("component_tree.$uuid");
+      }
+      else {
+        $staged->setData("component_tree.$uuid.inputs", $new);
+      }
+      $dirty = TRUE;
+    }
+
+    if ($dirty && empty($staged->getData('component_tree'))) {
+      $staged->clearData('component_tree');
+    }
+    return $dirty;
   }
 
 }

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Entity;
 
+use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemListInstantiatorTrait;
 use Drupal\Component\Serialization\Json;
+use Drupal\Component\Utility\NestedArray;
 use Drupal\Core\Config\Entity\ConfigEntityBase;
 use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\language\Config\LanguageConfigOverride;
@@ -182,6 +184,29 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
   public function postSave(EntityStorageInterface $storage, $update = TRUE): void {
     unset($this->typedData);
     parent::postSave($storage, $update);
+  }
+
+  /**
+   * Builds the full translated component tree for the given language.
+   *
+   * Merges the base config's component_tree with the sparse
+   * LanguageConfigOverride for $langcode and returns a dangling
+   * ComponentTreeItemList containing the merged result. The entity's own
+   * component_tree property is still the V1 (pre-update) base at call time, so
+   * the returned tree is the V1 translated tree ready for the updater to run.
+   *
+   * @return \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList
+   *   A dangling ComponentTreeItemList containing the merged (base + override)
+   *   component tree, not yet updated.
+   *
+   * @internal
+   */
+  public function getTranslatedComponentTree(string $langcode): ComponentTreeItemList {
+    $override = $this->getTranslation($langcode)->getData();
+    $merged = NestedArray::mergeDeepArray([$this->toArray(), $override], TRUE);
+    $tree = $this->createDanglingComponentTreeItemList($this);
+    $tree->setValue(\array_values($merged['component_tree'] ?? []));
+    return $tree;
   }
 
   /**
