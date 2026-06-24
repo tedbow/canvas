@@ -101,9 +101,9 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
     self::assertEntityIsValid($this->entity);
 
-    // Delete BOTH translatable props — this empties the component_tree side of
+    // Delete ALL translatable props — this empties the component_tree side of
     // the override on reconciliation.
-    $this->removeBothProps();
+    $this->removeAllProps();
     $this->generateComponentConfig();
 
     $tree = $this->entity->getComponentTree();

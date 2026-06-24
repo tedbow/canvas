@@ -65,7 +65,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
    * Creates a Page with an English default and a Spanish translation.
    */
   private function createPageWithTranslation(
-    array $en_inputs = ['required_text' => 'Hello world', 'optional_text' => 'Optional EN'],
+    array $en_inputs = ['required_text' => 'Hello world', 'optional_text' => 'Optional EN', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']],
     array $es_inputs = self::ES_TRANSLATION_INPUTS,
   ): Page {
     $page = Page::create([

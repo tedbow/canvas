@@ -61,6 +61,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
       'inputs' => [
         'required_text' => 'Hello world',
         'optional_text' => 'Optional EN',
+        'features' => ['Alpha', 'Beta', 'Gamma', 'Delta'],
       ],
     ],
   ];
@@ -153,7 +154,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // Both staged overrides should have optional_text pruned in-memory.
     $es_stored = $this->entity->getTranslation('es')
       ->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
-    self::assertSame(['required_text' => 'Hola mundo'], $es_stored);
+    self::assertSame(['required_text' => 'Hola mundo', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']], $es_stored);
 
     $fr_stored = $this->entity->getTranslation('fr')
       ->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
@@ -300,7 +301,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
     self::assertEntityIsValid($this->entity);
 
-    $this->removeBothProps();
+    $this->removeAllProps();
     $this->generateComponentConfig();
 
     $staged = $this->updateAndPublishOverrides();

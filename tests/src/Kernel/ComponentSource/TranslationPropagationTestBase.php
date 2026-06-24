@@ -55,6 +55,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected const array ES_TRANSLATION_INPUTS = [
     'required_text' => 'Hola mundo',
     'optional_text' => 'opcional ES',
+    'features' => ['Alpha', 'Beta', 'Gamma', 'Delta'],
   ];
 
   protected JavaScriptComponent $jsComponent;
@@ -88,6 +89,12 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
           'type' => 'string',
           'title' => 'Optional Text',
           'examples' => ['Click me'],
+        ],
+        'features' => [
+          'type' => 'array',
+          'items' => ['type' => 'string'],
+          'title' => 'Features',
+          'examples' => [['Alpha', 'Beta', 'Gamma', 'Delta']],
         ],
       ],
       'required' => ['required_text'],
@@ -193,8 +200,8 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     yield 'Optional prop deleted — orphaned input removed from translation' => [
       'setup_method' => 'removeOptionalProp',
       'expected_modified' => TRUE,
-      'expected_content' => ['required_text' => 'Hola mundo'],
-      'expected_config' => ['required_text' => 'Hola mundo'],
+      'expected_content' => ['required_text' => 'Hola mundo', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']],
+      'expected_config' => ['required_text' => 'Hola mundo', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']],
     ];
     yield 'Unsafe prop type change — update blocked, translation unchanged' => [
       'setup_method' => 'changePropType',
@@ -205,14 +212,20 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     yield 'Prop removed and another added — removed key gone, new optional key absent from translation' => [
       'setup_method' => 'removeAndAddProp',
       'expected_modified' => TRUE,
-      'expected_content' => ['required_text' => 'Hola mundo'],
-      'expected_config' => ['required_text' => 'Hola mundo'],
+      'expected_content' => ['required_text' => 'Hola mundo', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']],
+      'expected_config' => ['required_text' => 'Hola mundo', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']],
     ];
     yield 'All translatable props deleted — config override deleted entirely, content inputs emptied' => [
-      'setup_method' => 'removeBothProps',
+      'setup_method' => 'removeAllProps',
       'expected_modified' => TRUE,
       'expected_content' => [],
       'expected_config' => FALSE,
+    ];
+    yield 'Array prop cardinality decreased — translated array truncated to new max' => [
+      'setup_method' => 'decreaseArrayPropCardinality',
+      'expected_modified' => TRUE,
+      'expected_content' => ['required_text' => 'Hola mundo', 'optional_text' => 'opcional ES', 'features' => ['Alpha', 'Beta', 'Gamma']],
+      'expected_config' => ['required_text' => 'Hola mundo', 'optional_text' => 'opcional ES', 'features' => ['Alpha', 'Beta', 'Gamma']],
     ];
   }
 
@@ -262,15 +275,26 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     $this->jsComponent->setProps($props)->save();
   }
 
-  protected function removeBothProps(): void {
+  protected function removeAllProps(): void {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
     \assert(\array_key_exists('optional_text', $props));
     \assert(\array_key_exists('required_text', $props));
+    \assert(\array_key_exists('features', $props));
     \assert(!\array_key_exists('count', $props));
-    unset($props['required_text'], $props['optional_text']);
+    unset($props['required_text'], $props['optional_text'], $props['features']);
     $props['count'] = ['type' => 'integer', 'title' => 'Count', 'examples' => [3]];
     $this->jsComponent->setProps($props)->set('required', [])->save();
+  }
+
+  protected function decreaseArrayPropCardinality(): void {
+    $props = $this->jsComponent->getProps();
+    \assert($props !== NULL);
+    \assert(\array_key_exists('features', $props));
+    $props['features']['maxItems'] = 3;
+    // Adjust the example too!
+    unset($props['features']['examples'][0][3]);
+    $this->jsComponent->setProps($props)->save();
   }
 
 }
