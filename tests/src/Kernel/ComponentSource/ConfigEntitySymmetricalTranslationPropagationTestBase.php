@@ -322,20 +322,15 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * pruned. getTranslation() is auto-save-aware, which makes the bump-time
    * updater operate on the real draft.
    *
-   * Symmetric config translations also publish atomically: the base draft and
-   * its per-language override draft share a component version, so selecting
-   * either one for publication pulls in the whole group. The published live
-   * override is therefore identical whichever subset the client selects.
-   *
-   * @param string[] $select
-   *   Which group members the client puts in the publish request: 'base',
-   *   'override', or both.
+   * StagedLanguageConfigOverride drafts are server-internal: they never appear
+   * in the auto-save list and are published implicitly when their base config
+   * entity is published. Publishing the base therefore writes the reconciled
+   * override to live config.
    *
    * @legacy-covers \Drupal\canvas\Entity\ComponentTreeConfigEntityBase::getTranslation()
    * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::post()
    */
-  #[DataProvider('providerPublishGroupSelection')]
-  public function testPublishReconcilesStaleStagedOverride(array $select): void {
+  public function testPublishReconcilesStaleStagedOverride(): void {
     \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     // Set up a publish-capable user up front, so every auto-save entry created
     // below is owned by the user that later publishes them.
@@ -388,45 +383,32 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     $base->setComponentTree($tree->getValue());
     $auto_save_manager->saveEntity($base);
 
-    // Both the base and the override draft are now in auto-save.
+    // Only the base appears in the auto-save list; the override is internal.
+    $base_key = AutoSaveManager::getAutoSaveKey($base);
     $all = $auto_save_manager->getAllAutoSaveList(FALSE, FALSE);
-    $member_keys = [
-      'base' => AutoSaveManager::getAutoSaveKey($base),
-      'override' => AutoSaveManager::getAutoSaveKey($draft),
-    ];
-    self::assertSame(\array_values($member_keys), \array_keys($all));
+    self::assertSame([$base_key], \array_keys($all));
+    self::assertFalse($auto_save_manager->getAutoSaveEntity($draft)->isEmpty(), 'The override draft is staged, just not listed.');
 
-    // Publish only the selected member(s); the group must publish atomically.
-    $payload = [];
-    foreach ($select as $which) {
-      $key = $member_keys[$which];
-      $payload[$key] = ['data_hash' => $all[$key]['data_hash']];
-    }
+    // Publish the base. Its staged override is published implicitly.
+    $payload = [$base_key => ['data_hash' => $all[$base_key]['data_hash']]];
     $request = Request::create('/canvas/api/v0/auto-saves/publish', 'POST', content: (string) \json_encode($payload));
     $controller = \Drupal::classResolver(ApiAutoSaveController::class);
     \assert($controller instanceof ApiAutoSaveController);
     $response = $controller->post($request);
     self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
 
-    // No auto-saves remain: the whole group was published, not just the
-    // selected member.
+    // Both base and override drafts are cleared once published.
     self::assertSame([], $auto_save_manager->getAllAutoSaveList(FALSE, FALSE));
+    self::assertTrue($auto_save_manager->getAutoSaveEntity($draft)->isEmpty(), 'The override draft must be cleared after the base publishes it.');
 
     // The published live override reflects the reconciled draft: the editor's
-    // required_text survives and the deleted optional_text is gone — identical
-    // whichever group member the client selected.
+    // required_text survives and the deleted optional_text is gone.
     $live = $this->getStoredTranslation('es');
     self::assertFalse($live->isNew());
     self::assertSame(
       ['required_text' => 'Hola editado'],
       $live->get("component_tree.$uuid.inputs"),
     );
-  }
-
-  public static function providerPublishGroupSelection(): \Generator {
-    yield 'base and override selected' => [['base', 'override']];
-    yield 'only the base selected' => [['base']];
-    yield 'only the override selected' => [['override']];
   }
 
   /**
