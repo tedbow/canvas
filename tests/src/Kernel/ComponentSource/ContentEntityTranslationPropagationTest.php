@@ -24,8 +24,7 @@ use Symfony\Component\HttpFoundation\Response;
  *
  * Validates that after the default translation's component tree is updated via
  * ComponentSourceManager::updateComponentInstances(), all non-default
- * translation component trees are reconciled in-memory via
- * ComponentTreeItem::reconcileWithUpdatedDefaultTranslation().
+ * translation component trees receive the same updater pass independently.
  */
 #[CoversClass(ComponentSourceManager::class)]
 #[CoversClass(ComponentTreeItem::class)]
@@ -100,11 +99,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     return $item?->getInputs();
   }
 
-  /**
-   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem::reconcileWithUpdatedDefaultTranslation()
-   */
   #[DataProvider('providerPropagation')]
   public function testPropagation(
     string $setup_method,
@@ -172,8 +166,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
   /**
    * Tests that multiple translations are all reconciled on a single update.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testMultipleTranslationsUpdated(): void {
     ConfigurableLanguage::createFromLangcode('fr')->save();
@@ -232,9 +224,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
    * mode this fixture sets up via canvas_dev_translation, where component_version
    * is shared — triggering from a non-default translation must still bring the
    * default to the new version, keeping every translation on the same version.
-   *
-   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testNonDefaultLanguageTriggersPropagation(): void {
     $page = $this->createPageWithTranslation();
@@ -283,24 +272,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Tests that reconcileWithUpdatedDefaultTranslation() throws on default translation.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem::reconcileWithUpdatedDefaultTranslation()
-   */
-  public function testReconcileThrowsOnDefaultTranslation(): void {
-    $page = $this->createPageWithTranslation();
-    $en_tree = $page->getComponentTree();
-    $en_item = $en_tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
-    self::assertNotNull($en_item);
-
-    $this->expectException(\InvalidArgumentException::class);
-    $en_item->reconcileWithUpdatedDefaultTranslation([], [], $this->originalVersion);
-  }
-
-  /**
    * Tests that a component instance's per-translation label is preserved.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem::reconcileWithUpdatedDefaultTranslation()
    */
   public function testLabelPreservedDuringReconciliation(): void {
     $page = $this->createPageWithTranslation();
@@ -338,8 +310,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
    * Simulates content_translation's FieldTranslationSynchronizer creating a new
    * delta with empty translatable columns: reconciliation must still inject the
    * new prop's default without error.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem::reconcileWithUpdatedDefaultTranslation()
    */
   public function testEmptyTranslationInputsHandled(): void {
     $page = $this->createPageWithTranslation();
@@ -405,8 +375,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
   /**
    * Tests that multiple component instances in one tree are all reconciled.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testMultipleComponentInstancesReconciled(): void {
     $page = Page::create([
@@ -503,8 +471,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
   /**
    * Tests that deleting a slot cleans up the orphaned child in translations.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testSlotDeletedCleanup(): void {
     $page = Page::create([
@@ -571,8 +537,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
   /**
    * Tests that adding a slot leaves existing translations intact.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testNewSlotAddedPreservesTranslations(): void {
     $page = $this->createPageWithTranslation();

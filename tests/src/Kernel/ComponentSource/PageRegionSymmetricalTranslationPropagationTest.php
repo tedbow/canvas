@@ -9,9 +9,7 @@ namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\PageRegion;
 use Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage;
-use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\CoversMethod;
 use PHPUnit\Framework\Attributes\Group;
 
 /**
@@ -19,8 +17,6 @@ use PHPUnit\Framework\Attributes\Group;
  */
 #[CoversClass(ComponentSourceManager::class)]
 #[CoversClass(StagedLanguageConfigOverrideStorage::class)]
-#[CoversMethod(ComponentTreeItemList::class, 'reconcileTranslationsWithUpdatedItems')]
-#[CoversMethod(ComponentTreeItemList::class, 'reconcileConfigEntityTranslations')]
 #[Group('canvas')]
 #[Group('canvas_component_sources')]
 #[Group('canvas_data_model')]

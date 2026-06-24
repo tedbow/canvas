@@ -186,8 +186,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
 
   /**
    * Tests that a translation with no prior override is skipped gracefully.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testNoOverrideSkipped(): void {
     // Do NOT write an override — the language exists but has no translation.
@@ -206,8 +204,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
 
   /**
    * Tests that all LanguageConfigOverrides for the entity are updated together.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testMultipleLanguageOverridesReconciled(): void {
     ConfigurableLanguage::createFromLangcode('fr')->save();
@@ -252,7 +248,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * 3. It must now not yet be saved, only exist in memory
    * 4. Let it be updated via:
    *    ComponentSourceManager::updateComponentInstances()
-   *    → ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    * 5. Call StagedLanguageConfigOverride::save() to move it from PHP memory to
    *    the entity type's storage (i.e. AutoSaveManager)
    * 6. Publish it via the real auto-save controller, which will first ensure it
@@ -408,8 +403,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * Config entity translations store only the translatable subset of inputs.
    * Enum-typed props are not translatable, so a new enum prop added to the base
    * component must not appear in the staged override after reconciliation.
-   *
-   * @legacy-covers \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList::reconcileTranslationsWithUpdatedItems()
    */
   public function testNonTranslatablePropNotStaged(): void {
     $this->createComponentTreeTranslation('es', [

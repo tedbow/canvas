@@ -9,6 +9,7 @@ use Drupal\canvas\ComponentDoesNotMeetRequirementsException;
 use Drupal\canvas\ComponentIncompatibilityReasonRepository;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentInterface;
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\VersionedConfigEntityBase;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
@@ -17,6 +18,7 @@ use Drupal\Core\Cache\CacheBackendInterface;
 use Drupal\Core\Config\ConfigInstallerInterface;
 use Drupal\Core\DependencyInjection\ClassResolverInterface;
 use Drupal\Core\DrupalKernel;
+use Drupal\Core\Entity\FieldableEntityInterface;
 use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Plugin\DefaultPluginManager;
@@ -269,6 +271,12 @@ final class ComponentSourceManager extends DefaultPluginManager {
   /**
    * Updates component instances to the active (aka latest) version if possible.
    *
+   * Runs the same updater loop on every translation — default translation first,
+   * then each non-default translation. For content entities, each translation's
+   * ComponentTreeItemList is updated in-place. For config entities, a merged
+   * (base + override) ComponentTreeItemList is built, updaters run on it, and
+   * then the translatable subset is stored back into the StagedLanguageConfigOverride.
+   *
    * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $component_tree
    *   The component tree containing instances to update.
    *
@@ -278,10 +286,10 @@ final class ComponentSourceManager extends DefaultPluginManager {
   public function updateComponentInstances(ComponentTreeItemList $component_tree): bool {
     // Source updates from the default translation so every translation —
     // including the default — converges on the new version; when triggered from
-    // a non-default one (e.g. previewing it), redirect to the default tree and
-    // reconcile the rest (a no-op if it is already current). Relies on Canvas's
-    // symmetric translation (shared tree structure, incl. component_version),
-    // currently enforced by ComponentTreeSymmetricalTranslationConstraint.
+    // a non-default one (e.g. previewing it), redirect to the default tree.
+    // Relies on Canvas's symmetric translation (shared tree structure, incl.
+    // component_version), currently enforced by
+    // ComponentTreeSymmetricalTranslationConstraint.
     // @todo When asymmetric translation lands (each translation owns its tree),
     //   skip this redirect for asymmetrically translated fields. See
     //   https://git.drupalcode.org/project/canvas/-/work_items/3571130.
@@ -302,17 +310,52 @@ final class ComponentSourceManager extends DefaultPluginManager {
       }
     }
 
-    $wasModified = FALSE;
-    // Keyed by component instance UUID: snapshot of inputs/version before the
-    // update, and inputs/version after, so symmetric translations can be
-    // reconciled afterwards.
-    $updated_snapshots = [];
+    // Update the default translation tree first.
+    $wasModified = $this->runUpdatersOnComponentTreeItemList($component_tree);
 
-    foreach ($component_tree as $item) {
+    // Then update each non-default translation.
+    if ($host instanceof TranslatableInterface) {
+      $field_name = $component_tree->getName();
+      \assert(\is_string($field_name));
+      foreach ($host->getTranslationLanguages(include_default: FALSE) as $language) {
+        $translation = $host->getTranslation($language->getId());
+        \assert($translation instanceof FieldableEntityInterface);
+        if (!$translation->hasField($field_name)) {
+          continue;
+        }
+        $translation_tree = $translation->get($field_name);
+        \assert($translation_tree instanceof ComponentTreeItemList);
+        if ($this->runUpdatersOnComponentTreeItemList($translation_tree)) {
+          $wasModified = TRUE;
+        }
+      }
+    }
+    elseif ($host instanceof ComponentTreeConfigEntityBase) {
+      foreach ($host->getTranslationLanguages(include_default: FALSE) as $langcode => $language) {
+        if ($this->updateConfigEntityTranslation($host, $langcode, $component_tree)) {
+          $wasModified = TRUE;
+        }
+      }
+    }
+
+    return $wasModified;
+  }
+
+  /**
+   * Runs all applicable updaters on a ComponentTreeItemList in-place.
+   *
+   * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $tree
+   *   The tree to update. Modified in-place.
+   *
+   * @return bool
+   *   TRUE if at least one item was updated.
+   */
+  private function runUpdatersOnComponentTreeItemList(ComponentTreeItemList $tree): bool {
+    $wasModified = FALSE;
+    foreach ($tree as $item) {
       \assert($item instanceof ComponentTreeItem);
       $component = $item->getComponent();
       if ($component === NULL) {
-        // If the component is missing, there's nothing to update.
         continue;
       }
       $component_source = $component->getComponentSource();
@@ -322,32 +365,80 @@ final class ComponentSourceManager extends DefaultPluginManager {
       }
       $updater = $this->classResolver->getInstanceFromDefinition($updater_class);
       \assert($updater instanceof ComponentInstanceUpdaterInterface);
-      // Check if update is needed and safe, then perform the update.
       if ($updater->isUpdateNeeded($item) && $updater->canUpdate($item)) {
-        $uuid = $item->getUuid();
-        $inputs_before = $item->getInputs() ?? [];
         $update_result = $updater->update($item);
         \assert($update_result === ComponentInstanceUpdateAttemptResult::Latest);
         $wasModified = TRUE;
-        // After the update, load the target source to get all prop defaults.
-        // This is needed so translations receive values for new optional props
-        // even though the updater only injects defaults for required ones.
-        $updated_snapshots[$uuid] = [
-          'inputs_before' => $inputs_before,
-          'inputs_after' => $item->getInputs() ?? [],
-          'version_after' => $item->getComponentVersion(),
-          'default_explicit_input' => $item->getComponent()
-          ?->getComponentSource()
-          ?->getDefaultExplicitInput() ?? [],
-        ];
       }
     }
+    return $wasModified;
+  }
 
-    if ($wasModified) {
-      $component_tree->reconcileTranslationsWithUpdatedItems($updated_snapshots);
+  /**
+   * Updates a single config entity translation's sparse override.
+   *
+   * Config entity translations are sparse: the LanguageConfigOverride carries
+   * only the subset of translatable inputs the translator set. After the base
+   * config is updated (default translation tree), the sparse override must be
+   * adjusted to stay consistent: props deleted from the new version are pruned.
+   * New props are NOT injected into the override — they live only in the base
+   * config and take their default-translation values at render time.
+   *
+   * @param \Drupal\canvas\Entity\ComponentTreeConfigEntityBase $entity
+   *   The config entity whose default translation was just updated.
+   * @param string $langcode
+   *   The non-default language code whose override to update.
+   * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $updated_tree
+   *   The already-updated default translation tree. Used to read the current
+   *   valid prop keys per instance (the entity's property array is still stale).
+   *
+   * @return bool
+   *   TRUE if the staged override was changed.
+   */
+  private function updateConfigEntityTranslation(ComponentTreeConfigEntityBase $entity, string $langcode, ComponentTreeItemList $updated_tree): bool {
+    $staged = $entity->getTranslation($langcode);
+
+    // Build a UUID → valid-keys map from the already-updated default tree.
+    $valid_keys_by_uuid = [];
+    foreach ($updated_tree as $item) {
+      \assert($item instanceof ComponentTreeItem);
+      $valid_keys_by_uuid[$item->getUuid()] = \array_fill_keys(\array_keys($item->getInputs() ?? []), NULL);
     }
 
-    return $wasModified;
+    $staged_dirty = FALSE;
+    foreach ($valid_keys_by_uuid as $uuid => $valid_keys_after) {
+      $stored = $staged->getData("component_tree.$uuid.inputs");
+      if (!\is_array($stored) || empty($stored)) {
+        continue;
+      }
+
+      // Remove inputs for props deleted in the new version.
+      $reconciled = \array_intersect_key($stored, $valid_keys_after);
+
+      if ($reconciled === $stored) {
+        continue;
+      }
+
+      if (empty($reconciled)) {
+        $staged->clearData("component_tree.$uuid");
+      }
+      else {
+        $staged->setData("component_tree.$uuid.inputs", $reconciled);
+      }
+      $staged_dirty = TRUE;
+    }
+
+    if (!$staged_dirty) {
+      return FALSE;
+    }
+
+    // Prune empty component_tree entry if all UUIDs were cleared.
+    $component_tree_data = $staged->getData('component_tree');
+    if (empty($component_tree_data)) {
+      $staged->clearData('component_tree');
+    }
+
+    return TRUE;
   }
 
 }

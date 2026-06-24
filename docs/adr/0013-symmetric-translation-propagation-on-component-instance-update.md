@@ -10,80 +10,51 @@ Accepted
 
 ## Context
 
-[ADR #6](0006-One-field-row-per-component-instance.md) established that each component instance stores a `component_version` alongside its `inputs`. When a component's implementation changes, Canvas creates a new version of the `Component` config entity and existing component instances must be migrated forward: obsolete input keys removed, newly required input keys seeded with defaults, and the stored `component_version` updated to match.
+[ADR #6](0006-One-field-row-per-component-instance.md) established that each component instance stores a `component_version` alongside its `inputs`. When a component's implementation changes, Canvas creates a new version of the `Component` config entity and existing component instances must be migrated forward: obsolete input keys removed, newly required input keys seeded with defaults, and the stored `component_version` updated to match. This migration is performed by a component source's *instance updater* (`ComponentInstanceUpdaterInterface`).
 
-[ADR #10](0010-dynamic-config-schema-for-component-tree-translatability.md) established that each component instance's inputs have a per-instance translatability classification: some input keys are translatable (e.g. a static string prop typed by the content author), others are not (e.g. a prop whose value is derived from an entity field). This classification is determined dynamically from the component source's schema generator.
+[ADR #10](0010-dynamic-config-schema-for-component-tree-translatability.md) established that each component instance's inputs have a per-instance translatability classification: some input keys are translatable, others are not. This classification is determined dynamically from the component source's schema generator.
 
 [ADR #12](0012-symmetric-content-translation-store-all-inputs-validate-at-write-time.md) established that every translation stores the full set of inputs for every component instance — both translatable and non-translatable key-value pairs — and that non-translatable keys are synchronized from the default translation at write time.
 
 ### The gap: version updates were not propagated to translations
 
-Before this ADR, component instance version updates were applied only to the default translation's component tree. This created a structural integrity problem: after an update, the default translation's component instances referenced the new component version with updated inputs, but every non-default translation's component instances still referenced the old version and still held inputs shaped for that old version.
+Before this ADR, an instance version update was applied only to the default translation's component tree. After such an update, the default translation's instances referenced the new component version with updated inputs, but every non-default translation still referenced the old version and still held inputs shaped for that old version — stale `component_version`, orphaned input keys, missing keys for new props. This violated the invariant from ADR #12 (all translations store complete, synchronized inputs).
 
-This violated the invariant from ADR #12 (all translations store complete, synchronized inputs) and produced a new class of integrity problems specific to version transitions:
+### Symmetric translations make this propagation trivial
 
-1. **Stale `component_version`**: non-default translations still carried the old version identifier after the default translation was updated, making it impossible to render the non-default translations correctly.
+The symmetric translation model — same component tree structure across all translations, only inputs may differ per language — means a component instance update is structurally a change to *all* translations at once. The instance updater is deterministic: given the same instance and the same source-version transition, it produces the same structural result regardless of which translation's tree it runs on (it removes the same orphaned keys, seeds the same required-prop defaults, prunes the same deleted-slot children, and sets the same `component_version`). It does not touch existing valid keys, so each translation keeps its own translated values.
 
-2. **Orphaned input keys**: inputs for props that no longer exist in the new version persisted in non-default translations, producing invalid stored state.
-
-3. **Missing input keys for new props**: new props introduced by a version update were absent from non-default translations entirely, even for required props or non-translatable props whose value should be identical to the default translation.
-
-4. **Non-translatable inputs diverged**: for a prop that existed before the update and is non-translatable, the default translation's value may change during the update (e.g. a default is computed from a new component implementation); non-default translations holding the old value would then diverge from the default, violating the invariant in ADR #12.
-
-### Symmetric translations make the coupling explicit
-
-The symmetric translation model — same component tree structure across all translations, only inputs may differ per language — means that a component instance update on the default translation is structurally a change to all translations at once. The structural identity of the tree (which instances exist, in which parent-child relationships, carrying which component identities and versions) is shared. Input propagation must therefore happen at the same moment the default translation is updated, not deferred to a later save cycle.
-
-### Config entities require a different propagation mechanism
-
-Content entities store each translation as a separate entity object (via `TranslatableInterface`), and all translations are loaded in memory during a request that triggers an update. Config entity translations, however, are stored as `LanguageConfigOverride` records that contain only the overridden (translatable) keys — they do not store a complete copy of the base config. Propagation for config entities must operate directly on those override records rather than on full entity objects.
+Therefore propagation does not need a bespoke reconciliation algorithm. It only needs to run the *same updater* over *each translation's* tree.
 
 ## Decision
 
-### 1. Component instance update propagation belongs at the component tree data model layer
+### 1. Propagation is "run the updater on every translation"
 
-The reconciliation of non-default translations after a component instance version update is a responsibility of the component tree data model itself — not of any application service, controller, or HTTP layer. The data model already owns the invariant (ADR #12) that all translations carry complete, synchronized inputs; maintaining that invariant through version transitions is a natural extension of the same responsibility.
+After updating the default translation, `ComponentSourceManager::updateComponentInstances()` applies the very same instance updaters to each non-default translation's full component tree. There are no separate reconciliation rules and no per-instance update snapshots; the updater is the single authority on which keys survive, which defaults are seeded, and which structure is pruned. Symmetry is preserved by construction.
 
-This keeps the entry point for updates (the component source manager that iterates the default translation's tree and applies version updates) minimal: it triggers propagation once, after all default-translation updates are complete, by delegating to the data model layer.
+### 2. Content entities: apply the updater to each translation's field item list
 
-### 2. Propagation is triggered exactly once, after all default-translation updates complete
+Content entity translations are loaded in memory as field item lists. For each non-default translation, the updater is applied directly to that translation's `ComponentTreeItemList`. Existing translated (translatable) values are preserved because the updater leaves valid existing keys untouched. Non-translatable values converge to the default translation through the existing write-time synchronizer (`ComponentTreeFieldSymmetricalTranslationSynchronizer`, ADR #12) — not through this propagation step.
 
-Before any update is applied, a snapshot of the current state of each to-be-updated component instance is captured: inputs before the update, inputs after the update, the new version identifier, and the full set of prop defaults defined by the new component version. After all default-translation instances have been updated, propagation is triggered with the complete set of snapshots.
+### 3. Config entities: rebuild the full tree from base + override, then re-derive the sparse override
 
-This batch-then-propagate ordering means non-default translations see a consistent view of all changes atomically, rather than receiving a partial update mid-iteration.
+Config entity translations are stored as sparse `LanguageConfigOverride` records containing only translatable overrides, so the updater cannot run on them directly. For each translation:
 
-### 3. The reconciliation rules for each updated instance are symmetry-aware
+1. The full translated tree is reconstructed by merging the base config with the translation's override, then loaded as a dangling `ComponentTreeItemList`.
+2. The same updater is applied to that full tree.
+3. The sparse override is re-derived: each instance keeps only its prior override values whose keys are still translatable in the new version. Orphaned keys disappear (the updater removed them from the tree), new props are not added (their value comes from the base config), and `component_version` is not stored in overrides (it lives in the base config). If an instance's override becomes empty it is dropped.
 
-For each component instance that was updated in the default translation, every non-default translation's copy of that instance is reconciled using the following rules:
+Staged config translation mutations are kept in memory on `StagedLanguageConfigOverride` entities — the same auto-save pattern as `StagedConfigUpdate` — so they participate in the review-and-publish workflow. Publishing writes a real `LanguageConfigOverride`, or deletes it if empty.
 
-- **Removed props**: input keys that existed in the previous version but not in the new version are removed from the non-default translation's inputs. This mirrors the cleanup already applied to the default translation.
+Core already prunes overrides whose keys vanished from the base config (orphaned props, shrunk cardinality) via `ConfigFactoryOverrideBase::filterOverride()`, invoked from `LanguageConfigFactoryOverride::onConfigSave()` when the base config is saved. Canvas cannot reuse it: `filterOverride()` is a `protected` method with no public entry point other than that save-time event subscriber, so it is private API and out of reach — and it is coupled to a real `Config::save()`, whereas Canvas mutates staged, in-memory overrides before publish. Canvas therefore re-derives the override itself. This is not merely a reimplementation of `filterOverride()`: the staged override must be self-consistent and valid *before* publish (for preview and validation), and the re-derivation additionally drops keys whose translatability classification changed between versions — which `filterOverride()`, being key-existence-only, cannot detect.
 
-- **New props**: input keys introduced by the new version are seeded with the value the default translation now holds for that key (whether the updater injected it as a required-prop default, or it comes from the component's example/default value for optional props). The translation receives the same starting value regardless of whether the prop is translatable, because the translation had no prior value to preserve.
+### 4. The config override re-derivation reuses ADR #10's translatability classification
 
-- **Existing non-translatable props**: input keys that existed in both the old and new versions but are classified as non-translatable are updated to match the default translation's current value. This upholds the ADR #12 invariant that non-translatable inputs are identical across all translations.
+The config override re-derivation (Decision 3) decides which keys belong in an override using the same schema-driven translatability classification established in ADR #10 — the `inputs` field property's method for enumerating translatable keys (`ComponentInputs::getTranslatableInputKeys()`). This is what drops keys whose translatability classification changed between component versions. The content path needs no such classification: non-translatable convergence is handled by the write-time synchronizer (Decision 2, ADR #12), and the updater itself is translatability-agnostic.
 
-- **Existing translatable props**: input keys that existed in both versions and are classified as translatable are left unchanged. The translation's own value is the correct value to preserve.
+### 5. Propagation is in-memory only; the caller persists
 
-- **`component_version`**: the stored version identifier on every non-default translation's instance is updated to the new version, identical to the default translation. The version is structural metadata shared across all translations.
-
-### 4. The translatability classification reuses the same infrastructure established in ADR #10
-
-Whether an input key is translatable is determined by the same schema-driven mechanism established in ADR #10 — the `inputs` field property's method for enumerating translatable keys. There is no separate or parallel classification for the update propagation path.
-
-### 5. Config entity translations are reconciled via staged override config entities
-
-For config entities, where non-default translations are stored as sparse `LanguageConfigOverride` records containing only translatable overrides, propagation stages mutations in memory rather than writing to storage immediately. Staged overrides are represented as `StagedLanguageConfigOverride` config entities — the same auto-save pattern used by `StagedConfigUpdate` — so they participate in the review-and-publish workflow alongside other staged changes:
-
-- Orphaned keys (props deleted in the new version) are pruned from the in-memory staged override.
-- The version identifier is structural metadata in the base config, not in the override, so it is already correct after the default-translation update.
-- New props do not appear in the override at all (their value comes from the base config), so no action is needed.
-- Non-translatable props do not appear in the override either (by definition, only translatable overrides are stored), so there is nothing to reconcile for them.
-
-If pruning leaves a component instance's override entry empty, the entry is removed from the staged override entirely. The caller is responsible for persisting staged override entities to auto-save storage when it chooses to do so — mirroring the content entity pattern where reconciliation is in-memory only. Publishing a staged override writes it as a real `LanguageConfigOverride`; if the data is empty, the override record is deleted instead.
-
-### 6. Reconciliation is guarded against being applied to the default translation
-
-The reconciliation operation is defined to operate on a non-default translation's copy of a component instance. Attempting to invoke it on a component instance that belongs to the default translation is a programming error and results in an exception. This guard makes the contract explicit: the default translation is the source of truth that drives reconciliation; it is never the target.
+The updated translations (content field item lists, config staged overrides) are mutated in memory only. The caller is responsible for persisting them — by creating auto-saves for the content or config entity with a component tree, for both its default translation and every translation it has.
 
 ## Consequences
 
@@ -91,18 +62,16 @@ In order of importance, with the following markers:
 - positives (`+`) vs negatives (`-`) vs status quo (`≃`)
 - impact types: technical (`T`) vs operational (`O`) vs business (`B`)
 
-1. `+TOB` **Translation integrity is maintained through component version transitions.** After an update, every translation — content entity or config entity — carries inputs shaped for the new component version, with the correct version identifier. The ADR #12 invariant (all translations store complete, synchronized inputs) is preserved through updates, not just through saves.
+1. `+TOB` **Translation integrity is maintained through component version transitions.** After an update, every translation — content entity or config entity — carries inputs shaped for the new component version, with the correct version identifier. The ADR #12 invariant is preserved through updates.
 
-2. `+T` **Single call site triggers propagation.** The component source manager, which already iterates the default translation's tree and applies updates, is the only place that needs to be aware of translation propagation. All reconciliation logic is encapsulated at the data model layer. No controller, route, or other application-layer entry point needs to change.
+2. `+T` **No bespoke reconciliation logic.** There is no snapshot capture and no hand-written remove/seed/sync/preserve rule set. The instance updater — already the authority on a single-translation update — is the only mechanism. This removes a large class of "the rules disagree with the updater" bugs by construction.
 
-3. `+T` **Translatability classification is shared with ADR #10's machinery.** There is no risk of the update path and the translation-save path disagreeing about which inputs are translatable, because both use the same underlying classification.
+3. `+T` **Single source of truth for "which keys survive".** Content and config translations both prune via the same updater run, rather than re-deriving valid keys from a snapshot. Cardinality truncation and deleted-slot child pruning are handled identically everywhere.
 
-4. `+TOB` **Content and config entity translations are handled by the same conceptual rules**, even though the storage mechanisms differ. The reconciliation rules (remove orphans, seed new props, sync non-translatable props, preserve translatable props) are identical; only the storage access pattern differs.
+4. `+TOB` **Content and config translations share one conceptual model** — "run the updater on the full tree" — even though config requires reconstructing the full tree from base + override and re-deriving the sparse override afterward.
 
-5. `+T` **No new services are introduced.** The propagation responsibility is absorbed by the existing component tree data model types, consistent with the principle that the data model owns its invariants.
+5. `+T` **No new services.** The propagation responsibility stays in `ComponentSourceManager`, with a small read helper on the config entity to expose a translation's full tree.
 
-6. `-T` **Propagation requires all non-default translations to be accessible in memory at update time.** For content entities this means all translations are loaded during the update request. For a content entity with many translations, this is a memory overhead analogous to what `content_translation.synchronizer` already incurs on every presave. For config entities the overhead is minimal because only sparse override records are loaded.
+6. `-T` **Propagation requires all translations to be accessible in memory at update time.** For content entities all translations are loaded; for config entities only sparse override records are loaded and a full tree is rebuilt per translation. This is analogous to what `content_translation.synchronizer` already incurs.
 
-7. `≃T` **The update is still applied only to the default translation's tree.** Non-default translations are reconciled, not re-updated independently. This is correct because the update logic (which inputs to add, which to remove, what default values to use) is defined with respect to the component source and the default translation's actual values — not independently per translation.
-
-8. `+T` **Propagation tests use a minimal, rule-focused fixture rather than the canonical edge-case fixture.** The `ComponentTreeWithAllSymmetricalTranslationEdgeCasesTrait` fixture exercises prop-type edge cases (URI fields, rich prose, multi-value arrays, non-translatable booleans) for translation UI correctness tests. The propagation tests exercise different concerns — structural reconciliation rules when component versions change — for which a minimal two-prop fixture makes each case maximally legible. Sharing the fixture would add module dependencies and complexity without covering additional reconciliation rules.
+7. `≃T` **The update is applied independently per translation rather than reconciled against the default.** This is correct precisely because the updater is deterministic and symmetric: independent application yields the same structure on every translation, and existing translated values are preserved.

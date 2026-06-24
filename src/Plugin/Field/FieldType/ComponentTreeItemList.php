@@ -9,7 +9,6 @@ use Drupal\canvas\ComponentSource\ComponentSourceWithSlotsInterface;
 use Drupal\canvas\ComponentSource\ComponentSourceWithSwitchCasesInterface;
 use Drupal\canvas\Element\RenderSafeComponentContainer;
 use Drupal\canvas\Entity\Component;
-use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Exception\SubtreeInjectionException;
 use Drupal\canvas\HydratedTree;
@@ -22,7 +21,6 @@ use Drupal\Core\Cache\CacheableDependencyInterface;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\FieldableEntityInterface;
 use Drupal\Core\Entity\Plugin\DataType\EntityAdapter;
-use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\Field\FieldItemList;
 use Drupal\Core\Form\EnforcedResponseException;
 use Drupal\Core\Form\FormAjaxException;
@@ -568,165 +566,6 @@ final class ComponentTreeItemList extends FieldItemList implements RenderableInt
       $source_type_prefixes = \array_merge($source_type_prefixes, $inputs->getPropSourceTypes());
     }
     return \array_unique($source_type_prefixes);
-  }
-
-  /**
-   * Reconciles all translations after component instances in this tree updated.
-   *
-   * After the default translation's component instances are updated to a new
-   * version (via updateComponentInstances()), call this to propagate the
-   * structural changes (added/removed props, new component version) to every
-   * other translation of the host entity.
-   *
-   * All entities with component trees are updated in-memory:
-   * - for content entities: each translation's component tree field items, via
-   *   ContentEntityBase::getTranslation()).
-   * - config entities: each translation's StagedLanguageConfigOverride, via
-   *   ComponentTreeConfigEntityBase::getTranslation()).
-   *
-   * The caller is always responsible for persisting the translations if needed
-   * (e.g. creating per-translation auto-saves).
-   *
-   * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
-   *   Keyed by component instance UUID. Each entry holds:
-   *   - inputs_before: the default translation's inputs before the update.
-   *   - inputs_after: the default translation's inputs after the update.
-   *   - version_after: the component version after the update.
-   *   - default_explicit_input: all prop defaults/examples from the new
-   *     version's component source (covers new optional props).
-   */
-  public function reconcileTranslationsWithUpdatedItems(array $updated): void {
-    if (empty($updated)) {
-      return;
-    }
-
-    $entity = $this->getParent() !== NULL ? $this->getEntity() : NULL;
-    if ($entity === NULL) {
-      return;
-    }
-
-    if ($entity instanceof TranslatableInterface) {
-      $this->reconcileContentEntityTranslations($entity, $updated);
-    }
-    elseif ($entity instanceof ComponentTreeConfigEntityBase) {
-      self::reconcileConfigEntityTranslations($entity, $updated);
-    }
-  }
-
-  /**
-   * Reconciles translations for a content entity.
-   *
-   * @param \Drupal\Core\Entity\TranslatableInterface $entity
-   *   The default-translation entity whose component tree was just updated.
-   * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
-   *   Update snapshots keyed by UUID.
-   */
-  private function reconcileContentEntityTranslations(TranslatableInterface $entity, array $updated): void {
-    // @todo This assumes symmetric translation; under asymmetric translation
-    //   each translation owns its tree and must not be reconciled against the
-    //   default. See
-    //   https://git.drupalcode.org/project/canvas/-/work_items/3571130.
-    // JsonSchemaPropsComponentInstanceUpdater::update() prunes deleted-slot
-    // children from the default tree it operates on, but not from the separate
-    // per-translation trees. Collect the UUIDs surviving in the updated default
-    // tree so any instance missing from it can be pruned from each translation
-    // below, keeping every translation structurally in sync.
-    $surviving_uuids = [];
-    foreach ($this as $item) {
-      \assert($item instanceof ComponentTreeItem);
-      $surviving_uuids[$item->getUuid()] = TRUE;
-    }
-
-    // include_default: FALSE — skip the default translation (already updated).
-    foreach ($entity->getTranslationLanguages(include_default: FALSE) as $language) {
-      $translation = $entity->getTranslation($language->getId());
-      \assert($translation instanceof FieldableEntityInterface);
-      // Assume the field has the same name as in the default translation.
-      // FieldItemList::getParent() → EntityAdapter → entity.
-      $field_name = $this->getName();
-      if (!\is_string($field_name) || !$translation->hasField($field_name)) {
-        continue;
-      }
-      $translation_tree = $translation->get($field_name);
-      \assert($translation_tree instanceof ComponentTreeItemList);
-
-      foreach ($updated as $uuid => $snapshot) {
-        $translation_item = $translation_tree->getComponentTreeItemByUuid($uuid);
-        if ($translation_item === NULL) {
-          continue;
-        }
-        $translation_item->reconcileWithUpdatedDefaultTranslation(
-          $snapshot['inputs_before'],
-          $snapshot['inputs_after'],
-          $snapshot['version_after'],
-          $snapshot['default_explicit_input'] ?? [],
-        );
-      }
-
-      // Mirror the default tree's structure: drop instances no longer present
-      // in it (e.g. children orphaned by a deleted slot).
-      $translation_tree->filter(static fn (ComponentTreeItem $item): bool => isset($surviving_uuids[$item->getUuid()]));
-    }
-  }
-
-  /**
-   * Reconciles translations for a config entity via staged overrides.
-   *
-   * Config entity translations store only the translatable subset of inputs in
-   * LanguageConfigOverride records. This method adjusts each translation's
-   * staged LanguageConfigOverride (loaded in-memory via
-   * ComponentTreeConfigEntityBase::getTranslation()) to match the new component
-   * version by removing inputs for deleted props. The base config provides
-   * values for any new props, so no action is needed for new keys.
-   *
-   * Mutations are kept in-memory on the config entity via
-   * StagedLanguageConfigOverride objects.
-   * The caller is responsible for persisting the staged overrides when needed.
-   *
-   * @param \Drupal\canvas\Entity\ComponentTreeConfigEntityBase $entity
-   *   The config entity whose component tree was just updated.
-   * @param array<string, array{inputs_before: array, version_after: string, inputs_after: array}> $updated
-   *   Update snapshots keyed by UUID.
-   */
-  private static function reconcileConfigEntityTranslations(ComponentTreeConfigEntityBase $entity, array $updated): void {
-    foreach ($entity->getTranslationLanguages(include_default: FALSE) as $langcode => $language) {
-      $staged = $entity->getTranslation($langcode);
-
-      $staged_dirty = FALSE;
-      foreach ($updated as $uuid => $snapshot) {
-        $stored = $staged->getData("component_tree.$uuid.inputs");
-        if (!\is_array($stored) || empty($stored)) {
-          continue;
-        }
-
-        // Determine the full set of valid prop keys for the new version.
-        $valid_keys_after = $snapshot['inputs_after'] + \array_fill_keys(\array_keys($snapshot['default_explicit_input'] ?? []), NULL);
-        // Remove inputs for props deleted in the new version.
-        $reconciled = \array_intersect_key($stored, $valid_keys_after);
-
-        if ($reconciled === $stored) {
-          continue;
-        }
-
-        if (empty($reconciled)) {
-          $staged->clearData("component_tree.$uuid");
-        }
-        else {
-          $staged->setData("component_tree.$uuid.inputs", $reconciled);
-        }
-        $staged_dirty = TRUE;
-      }
-
-      if (!$staged_dirty) {
-        continue;
-      }
-
-      // Prune empty component_tree entry left by clearing all UUIDs.
-      $component_tree_data = $staged->getData('component_tree');
-      if (empty($component_tree_data)) {
-        $staged->clearData('component_tree');
-      }
-    }
   }
 
   /**
