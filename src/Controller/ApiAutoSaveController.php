@@ -9,6 +9,7 @@ use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\AssetLibrary;
 use Drupal\canvas\Entity\AutoSavePublishAwareInterface;
 use Drupal\canvas\Entity\BrandKit;
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\EntityConstraintViolationList;
 use Drupal\canvas\Entity\JavaScriptComponent;
 use Drupal\canvas\Exception\ConstraintViolationException;
@@ -305,6 +306,17 @@ final class ApiAutoSaveController extends ApiControllerBase {
         $entity->enforceIsNew(FALSE);
         $entities[] = $entity;
         $autoSaveEntities[] = $entity;
+        // StagedLanguageConfigOverride entries are filtered from
+        // getAllAutoSaveList() so they never reach this loop directly. When
+        // their base config entity is published, publish each automatically.
+        if ($entity instanceof ComponentTreeConfigEntityBase) {
+          foreach ($this->autoSaveManager->groupConfigEntityAutoSaves($entity) as $override) {
+            $override->autoSavePublish();
+            $override->enforceIsNew(FALSE);
+            $entities[] = $override;
+            $autoSaveEntities[] = $override;
+          }
+        }
         continue;
       }
 

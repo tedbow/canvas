@@ -228,13 +228,13 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertEntityIsValid($this->entity);
     $auto_save_manager->saveEntity($this->entity);
 
-    // Both the translated config entity and the Spanish
-    // StagedLanguageConfigOverride must now be in auto-save storage.
-    // @todo 🚧 The StagedLanguageConfigOverrides should NOT appear in this list, to match the behavior for content entities introduced in https://git.drupalcode.org/project/canvas/-/work_items/3591704
+    // The base config entity must be in auto-save storage. The
+    // StagedLanguageConfigOverride is stored internally but filtered from
+    // getAllAutoSaveList(); it will be published implicitly when the base
+    // entity is published.
     $all_auto_saves = $auto_save_manager->getAllAutoSaveList(FALSE, FALSE);
     self::assertSame([
       AutoSaveManager::getAutoSaveKey($this->entity),
-      AutoSaveManager::getAutoSaveKey($staged),
     ], \array_keys($all_auto_saves));
 
     // Publish everything through the real auto-save publish controller.

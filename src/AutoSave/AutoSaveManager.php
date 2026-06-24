@@ -458,6 +458,23 @@ class AutoSaveManager implements EventSubscriberInterface {
     /** @var array<string, AutoSaveEntry> $entries */
     $entries = $this->autoSaveStore->getAll();
 
+    // StagedLanguageConfigOverride entries are internal implementation details:
+    // they are published implicitly when their base config entity is published
+    // (see ApiAutoSaveController::post()), and discarded atomically via
+    // getTranslationGroupAutoSaves().
+    // Furthermore, no sensible behavior is possible when $with_entities == TRUE
+    // because unlike for content entity translations, they cannot be loaded and
+    // set as the active translation for the config entity they target.
+    // @see https://www.drupal.org/project/drupal/issues/3203918
+    // Hence it is safer to make it seem as if they do not exist, at this lower
+    // level — unlike how content entity translation filtering was implemented
+    // in https://git.drupalcode.org/project/canvas/-/work_items/3591704.
+    // @todo Remove this filtering in https://git.drupalcode.org/project/canvas/-/work_items/3591703.
+    $entries = \array_filter(
+      $entries,
+      static fn (array $entry): bool => ($entry['entity_type'] ?? NULL) !== StagedLanguageConfigOverride::ENTITY_TYPE_ID,
+    );
+
     // Sort by key to ensure consistent ordering.
     \ksort($entries);
     /** @var array<string, AutoSaveEntry> $result */
