@@ -151,7 +151,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     unset($props['optional_text']);
     $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
     $this->jsComponent->setProps($props)->save();
-    $this->generateComponentConfig();
 
     $tree = $page->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
@@ -188,7 +187,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     // A new required prop forces a value into every translation, so the
     // default's convergence is observable in its inputs.
     $this->addRequiredProp();
-    $this->generateComponentConfig();
 
     // Trigger the update from the non-default (Spanish) translation's tree.
     $page = Page::load($page->id());
@@ -233,7 +231,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $page = $this->createPageWithTranslation();
 
     $this->removeOptionalProp();
-    $this->generateComponentConfig();
 
     // Give the component instance a distinct per-translation label. Set after
     // the version bump so the tree resolves the updated component (touching the
@@ -270,7 +267,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $page = $this->createPageWithTranslation();
 
     $this->addOptionalProp();
-    $this->generateComponentConfig();
 
     // Empty the Spanish inputs in-memory before running the updater.
     $es_translation = $page->getTranslation('es');
@@ -315,7 +311,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     \assert($page_id !== NULL);
 
     $this->addOptionalProp();
-    $this->generateComponentConfig();
 
     \Drupal::entityTypeManager()->getStorage('component')->resetCache();
     $page = Page::load($page_id);
@@ -373,7 +368,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     // Remove a prop to trigger an update on both instances.
     $this->removeOptionalProp();
-    $this->generateComponentConfig();
 
     $tree = $page->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
@@ -403,7 +397,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $page = $this->createPageWithTranslation();
 
     $this->changePropType();
-    $this->generateComponentConfig();
 
     $tree = $page->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
@@ -467,7 +460,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     // Delete every slot from the component — orphans the child instance.
     $this->jsComponent->set('slots', [])->save();
-    $this->generateComponentConfig();
 
     $tree = $page->getComponentTree();
     self::assertCount(2, $tree);
@@ -506,7 +498,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
       'examples' => ['New slot content'],
     ];
     $this->jsComponent->set('slots', $slots)->save();
-    $this->generateComponentConfig();
 
     $tree = $page->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
@@ -564,7 +555,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     // New required prop → new component version.
     $this->addRequiredProp();
-    $this->generateComponentConfig();
 
     // Preview both translations; each creates its own reconciled auto-save.
     self::previewTranslations($page_id, ['en', 'es']);
@@ -610,7 +600,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     // New required prop → new component version.
     $this->addRequiredProp();
-    $this->generateComponentConfig();
 
     // Preview both translations so each has a reconciled auto-save.
     self::previewTranslations($page_id, ['en', 'es']);
@@ -703,7 +692,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     // The component evolves: optional_text removed, voice added → new version.
     $this->removeAndAddProp();
-    $this->generateComponentConfig();
 
     // Only EN is re-previewed, so only its auto-save is reconciled; the ES
     // auto-save is left at the original version.
@@ -776,7 +764,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     \assert($page_id !== NULL);
 
     $this->addRequiredProp();
-    $this->generateComponentConfig();
 
     self::previewTranslations($page_id, ['en', 'es']);
 

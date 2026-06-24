@@ -15,7 +15,6 @@ use Drupal\canvas\Storage\ComponentTreeLoader;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\Tests\canvas\Kernel\CanvasKernelTestBase;
-use Drupal\Tests\canvas\Traits\GenerateComponentConfigTrait;
 use Drupal\Tests\user\Traits\UserCreationTrait;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -31,7 +30,6 @@ use PHPUnit\Framework\Attributes\DataProvider;
  */
 abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
 
-  use GenerateComponentConfigTrait;
   use UserCreationTrait;
 
   /**
@@ -91,6 +89,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
           'examples' => ['Click me'],
         ],
         'features' => [
+          // No `maxItems` → unlimited cardinality.
           'type' => 'array',
           'items' => ['type' => 'string'],
           'title' => 'Features',
@@ -116,7 +115,6 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
       'dataDependencies' => [],
     ]);
     self::assertSame(SAVED_NEW, $this->jsComponent->save());
-    $this->generateComponentConfig();
 
     $component_id = JsComponentDiscovery::getComponentConfigEntityId($this->jsComponent->id());
     $component = Component::load($component_id);
@@ -127,8 +125,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   /**
    * Sets up the non-default (ES) translation before the component is updated.
    *
-   * Called once at the start of testPropagation(), before the prop mutation
-   * and generateComponentConfig() are called.
+   * Called once at the start of testPropagation(), before the prop mutation.
    *
    * @return \Drupal\Core\Entity\ContentEntityInterface|\Drupal\canvas\Entity\ComponentTreeConfigEntityBase
    *   The default-translation entity whose component tree will be updated.
@@ -171,7 +168,6 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     self::assertEntityIsValid($this->entity);
 
     $this->{$setup_method}();
-    $this->generateComponentConfig();
 
     $loader = $this->container->get(ComponentTreeLoader::class);
     \assert($loader instanceof ComponentTreeLoader);

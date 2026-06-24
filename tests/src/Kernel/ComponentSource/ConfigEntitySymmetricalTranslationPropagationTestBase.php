@@ -114,7 +114,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     // Do NOT write an override — the language exists but has no translation.
     $this->addOptionalProp();
-    $this->generateComponentConfig();
 
     $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
@@ -144,7 +143,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertEntityIsValid($this->entity);
 
     $this->removeOptionalProp();
-    $this->generateComponentConfig();
 
     $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
@@ -268,7 +266,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertEntityIsValid($this->entity);
 
     $this->removeOptionalProp();
-    $this->generateComponentConfig();
 
     $this->updateAndPublishOverrides();
 
@@ -302,7 +299,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertEntityIsValid($this->entity);
 
     $this->removeAllProps();
-    $this->generateComponentConfig();
 
     $staged = $this->updateAndPublishOverrides();
     self::assertTrue($staged->isEmpty(), 'Staged override must be empty after both props deleted.');
@@ -343,7 +339,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertEntityIsValid($this->entity);
 
     $this->removeOptionalProp();
-    $this->generateComponentConfig();
 
     $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
@@ -424,7 +419,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
       'examples' => ['left'],
     ];
     $this->jsComponent->setProps($props)->save();
-    $this->generateComponentConfig();
 
     $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);

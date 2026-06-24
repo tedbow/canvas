@@ -104,7 +104,6 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     // Delete ALL translatable props — this empties the component_tree side of
     // the override on reconciliation.
     $this->removeAllProps();
-    $this->generateComponentConfig();
 
     $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
