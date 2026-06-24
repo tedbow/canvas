@@ -113,9 +113,9 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
         self::assertArrayNotHasKey($removed_key, $stored, 'Deleted prop must be pruned from staged override.');
       }
       if ($new_key !== NULL) {
-        // New props are seeded on the base config (default translation), not
-        // in the LanguageConfigOverride, so they must NOT appear in the
-        // staged override.
+        // New props are never injected into a LanguageConfigOverride — the
+        // sparse override stores only translatable overrides, and new props
+        // have no translated value yet.
         self::assertArrayNotHasKey($new_key, $stored, 'New props must not appear in staged config override.');
       }
       self::assertSame($expected_remaining_override_inputs, $stored);
