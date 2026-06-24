@@ -9,6 +9,7 @@ use Drupal\canvas\CanvasUriDefinitions;
 use Drupal\canvas\ClientDataToEntityConverter;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\Component;
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ComponentTreeEntityInterface;
 use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\Entity\PageRegion;
@@ -204,14 +205,13 @@ final class ApiLayoutController {
         // component instances updated, too. They must remain in sync, so also
         // save the updated translations.
         // @see ADR #13, decision 4: propagation is in-memory only.
-        $this->autoSaveManager->saveEntity($entity instanceof ContentEntityInterface
-          // For content entities $entity may be a non-default translation.
-          ? $entity->getUntranslated()
-          // For config entities, $entity is always the default translation.
-          : $entity
-        );
-        foreach ($entity->getTranslationLanguages(include_default: FALSE) as $language) {
-          $this->autoSaveManager->saveEntity($entity->getTranslation($language->getId()));
+        // For content entities $entity may be a non-default translation; for
+        // config entities $entity is always the default translation.
+        $default = $entity instanceof ContentEntityInterface ? $entity->getUntranslated() : $entity;
+        \assert($default instanceof ContentEntityInterface || $default instanceof ComponentTreeConfigEntityBase);
+        $this->autoSaveManager->saveEntity($default);
+        foreach ($default->getTranslationLanguages(include_default: FALSE) as $language) {
+          $this->autoSaveManager->saveEntity($default->getTranslation($language->getId()));
         }
       }
 
