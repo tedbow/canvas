@@ -132,10 +132,10 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   public static function providerPropagation(): \Generator {
-    yield 'New optional prop added — translation gets default value' => [
+    yield 'New optional prop added — translation unchanged (updater skips optional props)' => [
       'setup_method' => 'addOptionalProp',
       'expected_modified' => TRUE,
-      'new_key' => 'voice',
+      'new_key' => NULL,
       'expected_optional' => 'Opcional ES',
     ];
     yield 'New required prop added — translation gets example value' => [
@@ -156,10 +156,10 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
       'new_key' => NULL,
       'expected_optional' => 'Opcional ES',
     ];
-    yield 'Prop removed and another added — both changes propagated' => [
+    yield 'Prop removed and another added — removed key gone, new optional key absent from translation' => [
       'setup_method' => 'removeAndAddProp',
       'expected_modified' => TRUE,
-      'new_key' => 'voice',
+      'new_key' => NULL,
       'expected_optional' => NULL,
     ];
   }
@@ -203,16 +203,14 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
     self::assertNotNull($es_inputs);
     self::assertArrayNotHasKey('optional_text', $es_inputs);
-    self::assertArrayHasKey('voice', $es_inputs);
-    self::assertSame('polite', $es_inputs['voice']);
+    self::assertArrayNotHasKey('voice', $es_inputs);
     self::assertSame('Hola mundo', $es_inputs['required_text']);
 
     // French translation.
     $fr_inputs = $page->getTranslation('fr')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID)?->getInputs();
     self::assertNotNull($fr_inputs);
     self::assertArrayNotHasKey('optional_text', $fr_inputs);
-    self::assertArrayHasKey('voice', $fr_inputs);
-    self::assertSame('polite', $fr_inputs['voice']);
+    self::assertArrayNotHasKey('voice', $fr_inputs);
     self::assertSame('Bonjour monde', $fr_inputs['required_text']);
   }
 
@@ -229,9 +227,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $page = $this->createPageWithTranslation();
 
     // A new required prop forces a value into every translation, so the
-    // default's convergence is observable in its inputs (the updater injects
-    // required-prop defaults into the source/default tree; optional ones are
-    // only added to non-default translations during reconciliation).
+    // default's convergence is observable in its inputs.
     $this->addRequiredProp();
     $this->generateComponentConfig();
 
@@ -305,11 +301,11 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Tests that empty translation inputs only gain the new prop's default.
+   * Tests that empty translation inputs are handled without error.
    *
    * Simulates content_translation's FieldTranslationSynchronizer creating a new
-   * delta with empty translatable columns: reconciliation must still inject the
-   * new prop's default without error.
+   * delta with empty translatable columns: the updater must run without error
+   * and bump the component version even when inputs are empty.
    */
   public function testEmptyTranslationInputsHandled(): void {
     $page = $this->createPageWithTranslation();
@@ -317,7 +313,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $this->addOptionalProp();
     $this->generateComponentConfig();
 
-    // Empty the Spanish inputs in-memory before reconciling.
+    // Empty the Spanish inputs in-memory before running the updater.
     $es_translation = $page->getTranslation('es');
     $es_item = $es_translation->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
     self::assertNotNull($es_item);
@@ -328,10 +324,12 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     \assert($manager instanceof ComponentSourceManager);
     self::assertTrue($manager->updateComponentInstances($tree));
 
-    $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
-    self::assertNotNull($es_inputs);
-    self::assertArrayHasKey('voice', $es_inputs);
-    self::assertSame('polite', $es_inputs['voice']);
+    // The updater runs without error. The new optional prop is not seeded
+    // (the updater skips optional props); the version is bumped.
+    $es_item_after = $page->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($es_item_after);
+    self::assertArrayNotHasKey('voice', $es_item_after->getInputs() ?? []);
+    self::assertNotSame($this->originalVersion, $es_item_after->getComponentVersion());
   }
 
   /**

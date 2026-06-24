@@ -311,9 +311,7 @@ final class ComponentSourceManager extends DefaultPluginManager {
       }
     }
 
-    // Update the default translation tree first, capturing per-UUID snapshots
-    // so translations can be seeded with new optional prop defaults.
-    [$wasModified, $snapshots] = $this->runUpdatersOnComponentTreeItemList($component_tree);
+    $wasModified = $this->runUpdatersOnComponentTreeItemList($component_tree);
 
     // Then update each non-default translation.
     if ($host instanceof TranslatableInterface) {
@@ -327,7 +325,7 @@ final class ComponentSourceManager extends DefaultPluginManager {
         }
         $translation_tree = $translation->get($field_name);
         \assert($translation_tree instanceof ComponentTreeItemList);
-        if ($this->updateTranslationTreeItemList($translation_tree, $snapshots, $component_tree)) {
+        if ($this->runUpdatersOnComponentTreeItemList($translation_tree)) {
           $wasModified = TRUE;
         }
       }
@@ -349,15 +347,11 @@ final class ComponentSourceManager extends DefaultPluginManager {
    * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $tree
    *   The tree to update. Modified in-place.
    *
-   * @return array{bool, array<string, array{inputs_before: array, version_after: string, default_explicit_input: array}>}
-   *   A two-element tuple: [wasModified, snapshots]. Snapshots are keyed by
-   *   component instance UUID and carry the pre-update inputs, new version, and
-   *   the full default-explicit-input map (all props including optional ones)
-   *   so translation trees can be seeded with new optional prop defaults.
+   * @return bool
+   *   TRUE if at least one item was updated.
    */
-  private function runUpdatersOnComponentTreeItemList(ComponentTreeItemList $tree): array {
+  private function runUpdatersOnComponentTreeItemList(ComponentTreeItemList $tree): bool {
     $wasModified = FALSE;
-    $snapshots = [];
     foreach ($tree as $item) {
       \assert($item instanceof ComponentTreeItem);
       $component = $item->getComponent();
@@ -372,96 +366,11 @@ final class ComponentSourceManager extends DefaultPluginManager {
       $updater = $this->classResolver->getInstanceFromDefinition($updater_class);
       \assert($updater instanceof ComponentInstanceUpdaterInterface);
       if ($updater->isUpdateNeeded($item) && $updater->canUpdate($item)) {
-        $inputs_before = $item->getInputs() ?? [];
         $update_result = $updater->update($item);
         \assert($update_result === ComponentInstanceUpdateAttemptResult::Latest);
         $wasModified = TRUE;
-        // Fetch the component source AFTER the update: update() bumps
-        // component_version, which via onChange() resets
-        // sourcePluginCollection, so the next getComponentSource() call returns
-        // the V2 plugin with V2 settings — including any newly added optional
-        // props.
-        $snapshots[$item->getUuid()] = [
-          'inputs_before' => $inputs_before,
-          'version_after' => $item->getComponentVersion(),
-          'default_explicit_input' => $component->getComponentSource()->getDefaultExplicitInput(),
-        ];
       }
     }
-    return [$wasModified, $snapshots];
-  }
-
-  /**
-   * Updates a content entity translation's ComponentTreeItemList in-place.
-   *
-   * Runs the updater on each item (handles version bump, required-prop seeding,
-   * and deleted-prop pruning), then seeds any new optional props from the
-   * default explicit input captured during the default-translation pass. This
-   * ensures that new optional props appear in every translation pre-filled with
-   * the component's canonical example value, ready for translators to override.
-   *
-   * Mirrors the surviving-UUIDs filter from the default tree: items removed
-   * from the updated default tree (e.g. children orphaned by a deleted slot)
-   * are dropped from the translation tree as well.
-   *
-   * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $translation_tree
-   *   The translation's component tree to update in-place.
-   * @param array<string, array{inputs_before: array, version_after: string, default_explicit_input: array}> $snapshots
-   *   Snapshots from the default-translation updater pass, keyed by UUID.
-   * @param \Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList $updated_default_tree
-   *   The already-updated default translation tree. Used to mirror structural
-   *   changes (e.g. slot-child deletions) into the translation tree.
-   *
-   * @return bool
-   *   TRUE if the translation tree was modified.
-   */
-  private function updateTranslationTreeItemList(ComponentTreeItemList $translation_tree, array $snapshots, ComponentTreeItemList $updated_default_tree): bool {
-    // Run the standard updater first (version bump, required props, deletions).
-    [$wasModified] = $this->runUpdatersOnComponentTreeItemList($translation_tree);
-
-    // Seed new optional props from snapshots (the updater only injects required
-    // ones; optional new props must also reach translations so translators see
-    // them pre-filled with the component's canonical example value).
-    foreach ($snapshots as $uuid => $snapshot) {
-      $item = $translation_tree->getComponentTreeItemByUuid($uuid);
-      if ($item === NULL) {
-        continue;
-      }
-      $inputs_before = $snapshot['inputs_before'];
-      $default_explicit_input = $snapshot['default_explicit_input'];
-      $my_inputs = $item->getInputs() ?? [];
-      $needs_update = FALSE;
-      foreach ($default_explicit_input as $key => $entry) {
-        // Only seed props that are new (absent from inputs_before) and
-        // still absent from this translation's inputs after the updater ran.
-        if (\array_key_exists($key, $inputs_before) || \array_key_exists($key, $my_inputs)) {
-          continue;
-        }
-        $value = $entry['value'] ?? NULL;
-        if ($value !== NULL) {
-          $my_inputs[$key] = $value;
-          $needs_update = TRUE;
-        }
-      }
-      if ($needs_update) {
-        $item->setInput($my_inputs);
-        $wasModified = TRUE;
-      }
-    }
-
-    // Mirror structural changes from the default tree: drop items no longer
-    // present in the updated default tree (e.g. children of a deleted slot).
-    $surviving_uuids = [];
-    foreach ($updated_default_tree as $item) {
-      \assert($item instanceof ComponentTreeItem);
-      $surviving_uuids[$item->getUuid()] = TRUE;
-    }
-    $before_count = \count($translation_tree);
-    $translation_tree->filter(static fn (ComponentTreeItem $item): bool => isset($surviving_uuids[$item->getUuid()]));
-    if (\count($translation_tree) !== $before_count) {
-      $wasModified = TRUE;
-    }
-
     return $wasModified;
   }
 
