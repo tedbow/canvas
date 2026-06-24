@@ -91,7 +91,7 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     \assert($override instanceof LanguageConfigOverride);
     $override->set('component_tree', [
       static::TRANSLATED_COMPONENT_INSTANCE_UUID => [
-        'inputs' => ['required_text' => 'Hola mundo', 'optional_text' => 'opcional ES'],
+        'inputs' => self::ES_TRANSLATION_INPUTS,
       ],
     ]);
     // Translations only override the translatable `label`; the structural keys

@@ -49,14 +49,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   protected const string TRANSLATED_COMPONENT_INSTANCE_UUID = '22222222-2222-4222-8222-222222222222';
 
   /**
-   * The ES translation inputs written before each test's component update.
-   */
-  protected const array ES_TRANSLATION_INPUTS = [
-    'required_text' => 'Hola mundo',
-    'optional_text' => 'opcional ES',
-  ];
-
-  /**
    * @var ComponentTreeItemListArray
    * @todo Move to TranslationPropagationTestBase
    */
@@ -95,63 +87,22 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * Config entity translations are sparse LanguageConfigOverride records
    * containing only translatable overrides. New props (required or optional)
    * are never injected — they have no translated value until a translator sets
-   * one. Only removed props are pruned from the stored override.
+   * one. Only removed props are pruned from the stored override. When all
+   * translatable props are removed, the override record is deleted entirely
+   * ($expected_config === FALSE).
    */
-  protected function assertTranslationAfterUpdate(bool $was_modified, ?string $new_key, bool $new_key_is_required, ?string $removed_key): void {
+  protected function assertTranslationAfterUpdate(array $expected_content, array|false $expected_config): void {
     \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     $staged = $this->entity->getTranslation('es');
 
-    // Special case: removeBothProps deletes all translatable inputs, so the
-    // entire override record must be empty.
-    if ($staged->isEmpty()) {
+    if ($expected_config === FALSE) {
       self::assertTrue($staged->isEmpty(), 'Staged override must be empty when no translatable inputs remain.');
       return;
     }
 
     self::assertFalse($staged->isEmpty(), 'Staged override must still have data.');
     $stored = $staged->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
-    self::assertIsArray($stored);
-
-    if ($new_key !== NULL) {
-      // New props are never injected into a LanguageConfigOverride — the
-      // sparse override stores only translatable overrides, and new props
-      // have no translated value yet.
-      self::assertArrayNotHasKey($new_key, $stored, 'New props must not appear in staged config override.');
-    }
-    if ($removed_key !== NULL) {
-      self::assertArrayNotHasKey($removed_key, $stored, 'Deleted prop must be pruned from staged override.');
-    }
-
-    // Compute the expected remaining override by removing any deleted key from
-    // the original Spanish override inputs.
-    $expected = $removed_key !== NULL ? \array_diff_key(self::ES_TRANSLATION_INPUTS, [$removed_key => NULL]) : self::ES_TRANSLATION_INPUTS;
-    self::assertSame($expected, $stored);
-  }
-
-  /**
-   * {@inheritdoc}
-   *
-   * Adds a config-entity-specific case: all translatable props deleted, which
-   * causes the entire override record to be removed rather than merely pruned.
-   * This has a sibling test that covers the full publish lifecycle.
-   *
-   * @todo Move this case to the base provider and assert it for content entities
-   *   too — content translations should also end up with empty inputs when all
-   *   props are deleted. Requires adjusting assertTranslationAfterUpdate() to
-   *   not unconditionally assert 'required_text' survives when removeBothProps
-   *   is the setup method.
-   *
-   * @see ::testPublishDeletesEmptyOverride()
-   */
-  public static function providerPropagation(): \Generator {
-    yield from parent::providerPropagation();
-    yield 'All translatable props deleted — override record deleted entirely' => [
-      'setup_method' => 'removeBothProps',
-      'expected_modified' => TRUE,
-      'new_key' => NULL,
-      'new_key_is_required' => FALSE,
-      'removed_key' => NULL,
-    ];
+    self::assertSame($expected_config, $stored);
   }
 
   /**

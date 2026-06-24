@@ -24,6 +24,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
  * testPropagation() test, and its data provider. Concrete subclasses supply
  * the entity-type-specific translation setup and assertion logic via three
  * abstract methods.
+ *
+ * @phpstan-import-type OptimizedSingleComponentInputArray from \Drupal\canvas\Plugin\DataType\ComponentInputs
  */
 abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
 
@@ -40,6 +42,17 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     // - Config-defined component trees: makes PageRegion and ContentTemplate
     //   config entities translatable
     'canvas_dev_translation',
+  ];
+
+  /**
+   * The ES translation inputs written before each test's component update.
+   *
+   * Subclasses use this constant both in their setUp() and in providerPropagation()
+   * expected values so the two stay automatically in sync.
+   */
+  protected const array ES_TRANSLATION_INPUTS = [
+    'required_text' => 'Hola mundo',
+    'optional_text' => 'opcional ES',
   ];
 
   protected JavaScriptComponent $jsComponent;
@@ -114,18 +127,16 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   abstract protected function setUpTranslation(): ContentEntityInterface|ComponentTreeConfigEntityBase;
 
   /**
-   * Asserts the non-default (ES) translation state after the update.
+   * Asserts the ES translation state after the update.
    *
-   * @param bool $was_modified
-   *   Whether updateComponentInstances() reported a modification.
-   * @param string|null $new_key
-   *   The name of the new prop added to the component, or NULL if none.
-   * @param bool $new_key_is_required
-   *   Whether the new prop is required. Ignored when $new_key is NULL.
-   * @param string|null $removed_key
-   *   The name of the prop removed from the component, or NULL if none.
+   * @param OptimizedSingleComponentInputArray $expected_content
+   *   Exact expected ES inputs for the content entity translation.
+   * @param OptimizedSingleComponentInputArray|false $expected_config
+   *   Exact expected ES inputs stored in the config entity's
+   *   LanguageConfigOverride, or FALSE when the override record is deleted
+   *   entirely (all translatable inputs removed).
    */
-  abstract protected function assertTranslationAfterUpdate(bool $was_modified, ?string $new_key, bool $new_key_is_required, ?string $removed_key): void;
+  abstract protected function assertTranslationAfterUpdate(array $expected_content, array|false $expected_config): void;
 
   /**
    * Tests that non-default translations are updated when component props change.
@@ -134,20 +145,18 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
    *   A method name on $this that mutates $this->jsComponent.
    * @param bool $expected_modified
    *   Whether updateComponentInstances() should report a modification.
-   * @param string|null $new_key
-   *   The name of the new prop added to the component, or NULL if none.
-   * @param bool $new_key_is_required
-   *   Whether the new prop is required. Ignored when $new_key is NULL.
-   * @param string|null $removed_key
-   *   The name of the prop removed from the component, or NULL if none.
+   * @param OptimizedSingleComponentInputArray $expected_content
+   *   Exact expected ES inputs for the content entity translation after update.
+   * @param OptimizedSingleComponentInputArray|false $expected_config
+   *   Exact expected ES inputs for the config entity's LanguageConfigOverride
+   *   after update, or FALSE when the override is deleted entirely.
    */
   #[DataProvider('providerPropagation')]
   public function testPropagation(
     string $setup_method,
     bool $expected_modified,
-    ?string $new_key,
-    bool $new_key_is_required,
-    ?string $removed_key,
+    array $expected_content,
+    array|false $expected_config,
   ): void {
     $this->entity = $this->setUpTranslation();
     self::assertEntityIsValid($this->entity);
@@ -163,44 +172,45 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     $was_modified = $manager->updateComponentInstances($tree);
     self::assertSame($expected_modified, $was_modified);
 
-    $this->assertTranslationAfterUpdate($was_modified, $new_key, $new_key_is_required, $removed_key);
+    $this->assertTranslationAfterUpdate($expected_content, $expected_config);
   }
 
   public static function providerPropagation(): \Generator {
     yield 'New optional prop added — translation unchanged (updater skips optional props)' => [
       'setup_method' => 'addOptionalProp',
       'expected_modified' => TRUE,
-      'new_key' => 'voice',
-      'new_key_is_required' => FALSE,
-      'removed_key' => NULL,
+      'expected_content' => self::ES_TRANSLATION_INPUTS,
+      'expected_config' => self::ES_TRANSLATION_INPUTS,
     ];
     yield 'New required prop added — translation gets example value' => [
       'setup_method' => 'addRequiredProp',
       'expected_modified' => TRUE,
-      'new_key' => 'voice',
-      'new_key_is_required' => TRUE,
-      'removed_key' => NULL,
+      'expected_content' => self::ES_TRANSLATION_INPUTS + ['voice' => 'polite'],
+      'expected_config' => self::ES_TRANSLATION_INPUTS,
     ];
     yield 'Optional prop deleted — orphaned input removed from translation' => [
       'setup_method' => 'removeOptionalProp',
       'expected_modified' => TRUE,
-      'new_key' => NULL,
-      'new_key_is_required' => FALSE,
-      'removed_key' => 'optional_text',
+      'expected_content' => ['required_text' => 'Hola mundo'],
+      'expected_config' => ['required_text' => 'Hola mundo'],
     ];
     yield 'Unsafe prop type change — update blocked, translation unchanged' => [
       'setup_method' => 'changePropType',
       'expected_modified' => FALSE,
-      'new_key' => NULL,
-      'new_key_is_required' => FALSE,
-      'removed_key' => NULL,
+      'expected_content' => self::ES_TRANSLATION_INPUTS,
+      'expected_config' => self::ES_TRANSLATION_INPUTS,
     ];
     yield 'Prop removed and another added — removed key gone, new optional key absent from translation' => [
       'setup_method' => 'removeAndAddProp',
       'expected_modified' => TRUE,
-      'new_key' => 'voice',
-      'new_key_is_required' => FALSE,
-      'removed_key' => 'optional_text',
+      'expected_content' => ['required_text' => 'Hola mundo'],
+      'expected_config' => ['required_text' => 'Hola mundo'],
+    ];
+    yield 'All translatable props deleted — config override deleted entirely, content inputs emptied' => [
+      'setup_method' => 'removeBothProps',
+      'expected_modified' => TRUE,
+      'expected_content' => [],
+      'expected_config' => FALSE,
     ];
   }
 

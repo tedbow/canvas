@@ -66,7 +66,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
    */
   private function createPageWithTranslation(
     array $en_inputs = ['required_text' => 'Hello world', 'optional_text' => 'Optional EN'],
-    array $es_inputs = ['required_text' => 'Hola mundo', 'optional_text' => 'Opcional ES'],
+    array $es_inputs = self::ES_TRANSLATION_INPUTS,
   ): Page {
     $page = Page::create([
       'title' => 'Test Page',
@@ -117,25 +117,10 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   /**
    * {@inheritdoc}
    */
-  protected function assertTranslationAfterUpdate(bool $was_modified, ?string $new_key, bool $new_key_is_required, ?string $removed_key): void {
+  protected function assertTranslationAfterUpdate(array $expected_content, array|false $expected_config): void {
     \assert($this->entity instanceof Page);
     $es_inputs = self::getInputs($this->entity, 'es', self::COMPONENT_UUID);
-    self::assertNotNull($es_inputs);
-
-    if ($new_key !== NULL) {
-      if ($new_key_is_required) {
-        self::assertArrayHasKey($new_key, $es_inputs, 'New required prop must be seeded in translation.');
-      }
-      else {
-        self::assertArrayNotHasKey($new_key, $es_inputs, 'New optional prop must not be injected into translation (updater skips optional props).');
-      }
-    }
-    if ($removed_key !== NULL) {
-      self::assertArrayNotHasKey($removed_key, $es_inputs, 'Removed prop must be absent from translation inputs.');
-    }
-    if ($was_modified) {
-      self::assertSame('Hola mundo', $es_inputs['required_text'] ?? NULL, 'Existing translatable prop must be preserved.');
-    }
+    self::assertSame($expected_content, $es_inputs);
   }
 
   /**
@@ -438,7 +423,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
     self::assertNotNull($es_inputs);
     self::assertSame('Hola mundo', $es_inputs['required_text']);
-    self::assertSame('Opcional ES', $es_inputs['optional_text']);
+    self::assertSame('opcional ES', $es_inputs['optional_text']);
   }
 
   /**
@@ -531,7 +516,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
     self::assertNotNull($es_inputs);
     self::assertSame('Hola mundo', $es_inputs['required_text']);
-    self::assertSame('Opcional ES', $es_inputs['optional_text']);
+    self::assertSame('opcional ES', $es_inputs['optional_text']);
   }
 
   /**
