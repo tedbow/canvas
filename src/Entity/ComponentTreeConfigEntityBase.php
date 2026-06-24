@@ -299,7 +299,16 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
 
     $override = $language_manager->getLanguageConfigOverride($langcode, $this->getConfigDependencyName());
     \assert($override instanceof LanguageConfigOverride);
-    $this->stagedOverrides[$langcode] = StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
+    // fromLanguageConfigOverride() returns the pending auto-save draft when one
+    // exists (via StagedLanguageConfigOverride::load()), so reconciliation,
+    // validation and publishing operate on what will actually be published, not
+    // on the last-published live override. Clone it: AutoSaveManager memoizes
+    // that reconstructed draft, and callers (e.g. component-instance
+    // reconciliation) mutate the returned override. Mutating the memoized
+    // instance would corrupt the baseline AutoSaveManager::saveEntity() reads
+    // back via loadUnchanged(), making a reconciled save look like a no-op reset
+    // that drops the entry.
+    $this->stagedOverrides[$langcode] = clone StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
     return $this->stagedOverrides[$langcode];
   }
 
