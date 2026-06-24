@@ -19,8 +19,8 @@ use Drupal\Core\Cache\CacheBackendInterface;
 use Drupal\Core\Config\ConfigInstallerInterface;
 use Drupal\Core\DependencyInjection\ClassResolverInterface;
 use Drupal\Core\DrupalKernel;
+use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\FieldableEntityInterface;
-use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Plugin\DefaultPluginManager;
 use Drupal\Core\Update\UpdateKernel;
@@ -296,7 +296,7 @@ final class ComponentSourceManager extends DefaultPluginManager {
     //   skip this redirect for asymmetrically translated fields. See
     //   https://git.drupalcode.org/project/canvas/-/work_items/3571130.
     $host = $component_tree->getParent() !== NULL ? $component_tree->getEntity() : NULL;
-    if ($host instanceof TranslatableInterface && !$host->isDefaultTranslation()) {
+    if ($host instanceof ContentEntityInterface && !$host->isDefaultTranslation()) {
       $field_name = $component_tree->getName();
       $default = $host->getUntranslated();
       // Only redirect when getUntranslated() resolves to a distinct
@@ -315,7 +315,7 @@ final class ComponentSourceManager extends DefaultPluginManager {
     $wasModified = $this->runUpdatersOnComponentTreeItemList($component_tree);
 
     // Then update each non-default translation.
-    if ($host instanceof TranslatableInterface) {
+    if ($host instanceof ContentEntityInterface) {
       $field_name = $component_tree->getName();
       \assert(\is_string($field_name));
       foreach ($host->getTranslationLanguages(include_default: FALSE) as $language) {
