@@ -68,10 +68,17 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
   }
 
   /**
-   * Tests that exposed_slot label overrides survive tree reconciliation.
+   * Tests that an exposed_slot label keeps the override alive on publish.
    *
    * ContentTemplate stores exposed_slots data in the LanguageConfigOverride
-   * alongside component_tree. Reconciliation must not touch that non-tree data.
+   * alongside component_tree. When every translatable component_tree input is
+   * deleted, the component_tree side of the override empties — but the
+   * translated exposed_slot label must survive reconciliation, and publishing
+   * must NOT delete the live record. Contrast with
+   * ::testPublishDeletesEmptyOverride(), where nothing else remains and the
+   * record is deleted.
+   *
+   * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
    */
   public function testExposedSlotLabelOverridePreserved(): void {
     // Write a Spanish override that includes both component_tree and
@@ -92,8 +99,9 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
     self::assertEntityIsValid($this->translatedConfigEntity);
 
-    // Remove optional_text — this triggers reconciliation of component_tree.
-    $this->removeOptionalProp();
+    // Delete BOTH translatable props — this empties the component_tree side of
+    // the override on reconciliation.
+    $this->removeBothProps();
     $this->generateComponentConfig();
 
     $tree = $this->translatedConfigEntity->getComponentTree();
@@ -101,17 +109,21 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     \assert($manager instanceof ComponentSourceManager);
     $manager->updateComponentInstances($tree);
 
+    // Staged reconciliation: the emptied component_tree is pruned, but the slot
+    // label survives, so the staged override is not empty.
     $staged = $this->translatedConfigEntity->getTranslation('es');
+    self::assertNull($staged->getData('component_tree'), 'Emptied component_tree must be pruned from the staged override.');
+    self::assertSame('ranura de prueba', $staged->getData('exposed_slots.test_slot.label'), 'Exposed slot label override must survive reconciliation.');
+    self::assertFalse($staged->isEmpty(), 'Staged override must not be empty while the slot label remains.');
 
-    // component_tree reconciliation must prune optional_text.
-    $inputs = $staged->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
-    self::assertIsArray($inputs);
-    self::assertArrayNotHasKey('optional_text', $inputs, 'Deleted prop must be pruned from staged override.');
-    self::assertSame('Hola mundo', $inputs['required_text']);
-
-    // exposed_slots must be untouched by reconciliation.
-    $slot_label = $staged->getData('exposed_slots.test_slot.label');
-    self::assertSame('ranura de prueba', $slot_label, 'Exposed slot label override must survive tree reconciliation.');
+    // After publishing, the live override must NOT be deleted: only the
+    // translated slot label remains.
+    $this->updateAndPublishOverrides();
+    $live = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
+    \assert($live instanceof LanguageConfigOverride);
+    self::assertFalse($live->isNew(), 'Override must survive because a non-tree translation (slot label) remains.');
+    self::assertSame('ranura de prueba', $live->get('exposed_slots.test_slot.label'), 'Translated slot label must survive publish.');
+    self::assertArrayNotHasKey('component_tree', $live->getRawData(), 'Emptied component_tree key must be removed entirely from the published override.');
   }
 
 }
