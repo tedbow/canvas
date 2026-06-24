@@ -752,15 +752,22 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Discarding a translation's auto-save clears it via the delete endpoint.
+   * Discarding clears every translation's auto-save, whichever one is acted on.
+   *
+   * Propagation creates an auto-save in every translation. Because symmetric
+   * translation writes the shared component-tree columns for all translations
+   * at once, discarding one must clear them all; otherwise a stale sibling
+   * draft is left pending. The discard route carries no langcode, so the
+   * translation passed in must not change the outcome.
    *
    * @param string $discard_langcode
-   *   The translation whose auto-save is deleted.
+   *   The translation whose entity is passed to the discard endpoint.
    *
    * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::delete()
+   * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
    */
   #[DataProvider('providerDiscardTranslation')]
-  public function testDiscardAfterPropagationClearsTranslation(string $discard_langcode): void {
+  public function testDiscardAfterPropagationClearsAllTranslations(string $discard_langcode): void {
     $this->config('system.theme')->set('default', 'stark')->save();
     $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, AutoSaveManager::PUBLISH_PERMISSION]);
 
@@ -786,12 +793,8 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $response = $delete_controller->delete($target);
     self::assertSame(Response::HTTP_NO_CONTENT, $response->getStatusCode(), (string) $response->getContent());
 
-    // The targeted translation's auto-save is gone.
-    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
-    $page = Page::load($page_id);
-    \assert($page instanceof Page);
-    $target = $page->hasTranslation($discard_langcode) ? $page->getTranslation($discard_langcode) : $page;
-    self::assertTrue($auto_save_manager->getAutoSaveEntity($target)->isEmpty(), 'Discarded translation auto-save must be cleared.');
+    // Every translation's auto-save is cleared, not just the targeted one.
+    self::assertCount(0, $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE));
   }
 
   public static function providerDiscardTranslation(): \Generator {

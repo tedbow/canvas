@@ -398,20 +398,30 @@ final class ApiAutoSaveController extends ApiControllerBase {
   }
 
   public function delete(EntityInterface $entity): JsonResponse {
-    if ($this->autoSaveManager->getAutoSaveEntity($entity)->isEmpty()) {
+    // Discarding any member of an entity's pending-changes set discards the
+    // whole set, so no stale — and possibly invalid — sibling draft is left
+    // pending. A propagated edit creates an auto-save in every content
+    // translation, and a config entity's base draft and its per-language
+    // override drafts are separate entities; either way all members go
+    // together.
+    // @see \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
+    //
+    // This cascade lives on the discard endpoint, not in
+    // AutoSaveManager::delete(): that low-level delete also runs during publish
+    // cleanup (::post() deletes each published auto-save) and on
+    // hook_entity_delete, where cascading would discard siblings mid-publish.
+    // @see \Drupal\canvas\Hook\AutoSaveHooks::entityDelete()
+    // @todo The discard route carries no langcode, so it always upcasts the
+    //   default translation and cannot identify which one the editor acted on;
+    //   irrelevant while discard is atomic, revisit for asymmetric translation
+    //   in https://git.drupalcode.org/project/canvas/-/work_items/3591703
+    $group = $this->autoSaveManager->getTranslationGroupAutoSaves($entity);
+    if ($group === []) {
       return new JsonResponse(data: ['error' => 'No auto-save data found for this entity.'], status: Response::HTTP_NOT_FOUND);
     }
-    $this->autoSaveManager->delete($entity);
-    // A config entity's draft and its per-language StagedLanguageConfigOverride
-    // drafts form one atomic set of pending changes. Discarding any of them
-    // discards them all, so none is left orphaned.
-    //
-    // This lives on the discard endpoint, not in AutoSaveManager::delete():
-    // that low-level delete also runs during publish cleanup (::post() deletes
-    // each published auto-save) and on hook_entity_delete, where cascading
-    // would discard staged overrides mid-publish.
-    // @see \Drupal\canvas\Hook\AutoSaveHooks::entityDelete()
-    $this->autoSaveManager->discardConfigTranslationGroup($entity);
+    foreach ($group as $member) {
+      $this->autoSaveManager->delete($member);
+    }
     return new JsonResponse(data: ['message' => 'Auto-save data deleted successfully.'], status: Response::HTTP_NO_CONTENT);
   }
 

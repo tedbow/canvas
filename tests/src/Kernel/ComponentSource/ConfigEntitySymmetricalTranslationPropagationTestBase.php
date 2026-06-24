@@ -328,7 +328,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    *   Which auto-save is passed to the discard endpoint: 'base', or a langcode
    *   whose staged override is discarded.
    *
-   * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::discardConfigTranslationGroup()
+   * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
    * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::groupConfigEntityAutoSaves()
    */
   #[DataProvider('providerDiscardEntryPoint')]

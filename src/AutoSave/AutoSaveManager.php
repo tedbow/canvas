@@ -665,29 +665,62 @@ class AutoSaveManager implements EventSubscriberInterface {
   }
 
   /**
-   * Discards a config entity's entire pending-changes set.
+   * Returns every auto-save in an entity's atomic pending-changes set.
    *
-   * A ComponentTreeConfigEntityBase draft and its per-language
-   * StagedLanguageConfigOverride drafts form one atomic set of pending changes.
-   * Given either the config entity or one of its overrides, this discards the
-   * base draft and every override draft, so none is left orphaned.
+   * A single editor action drafts changes that must be published or discarded
+   * as one unit, even though they can span multiple auto-save entries:
+   * - For a content entity, symmetric translation writes the shared
+   *   component-tree columns (e.g. component_version) across every translation
+   *   at once, so each edited translation is a separate per-langcode auto-save
+   *   entry of the same entity. Leaving a sibling behind keeps a stale, and
+   *   possibly invalid, draft pending.
+   * - For a ComponentTreeConfigEntityBase, the base draft and each per-language
+   *   StagedLanguageConfigOverride draft are separate entities (distinct entity
+   *   types and IDs) that nothing in core links back together.
+   *
+   * Given any member of the set, this returns the whole set, so callers (the
+   * discard endpoint) can act on it atomically.
    *
    * @param \Drupal\Core\Entity\EntityInterface $entity
-   *   The config entity, or one of its staged language config overrides.
+   *   Any member of the pending-changes set: a content entity (any
+   *   translation), a config entity, or one of its staged language config
+   *   overrides.
+   *
+   * @return \Drupal\Core\Entity\EntityInterface[]
+   *   The auto-save entities forming $entity's pending-changes set, empty when
+   *   it has no auto-save at all.
    */
-  public function discardConfigTranslationGroup(EntityInterface $entity): void {
+  public function getTranslationGroupAutoSaves(EntityInterface $entity): array {
+    // Config: the base draft plus each per-language override draft. These are
+    // distinct entity types and IDs, matched by config name, so the generic
+    // type+id filter below cannot find them.
     $base = match (TRUE) {
       $entity instanceof ComponentTreeConfigEntityBase => $entity,
       $entity instanceof StagedLanguageConfigOverride => $this->configManager->loadConfigEntityByName($entity->getName()),
       default => NULL,
     };
-    if (!$base instanceof ComponentTreeConfigEntityBase) {
-      return;
+    if ($base instanceof ComponentTreeConfigEntityBase) {
+      $base_draft = $this->getAutoSaveEntity($base)->isEmpty() ? [] : [$base];
+      return [...$base_draft, ...$this->groupConfigEntityAutoSaves($base)];
     }
-    $this->delete($base);
-    foreach ($this->groupConfigEntityAutoSaves($base) as $override) {
-      $this->delete($override);
-    }
+
+    // Content (and any other entity type): every auto-save entry sharing this
+    // entity's type and ID — i.e. all edited translations of the same entity.
+    // @todo This groups every pending translation together, which is correct
+    //   for symmetric translation. Make it selective once asymmetric
+    //   translation is supported: https://www.drupal.org/i/3522198
+    $entries = \array_filter(
+      $this->getAllAutoSaveList(with_entities: TRUE, with_conflicts: FALSE),
+      static fn (array $entry): bool => $entry['entity_type'] === $entity->getEntityTypeId()
+        && (string) $entry['entity_id'] === (string) $entity->id(),
+    );
+    return \array_values(\array_map(
+      static function (array $entry): EntityInterface {
+        \assert($entry['entity'] instanceof EntityInterface);
+        return $entry['entity'];
+      },
+      $entries,
+    ));
   }
 
   public function deleteAll(): void {
