@@ -422,6 +422,12 @@ final class ComponentSourceManager extends DefaultPluginManager {
       }
       $inputs_typed_data = $item->get('inputs');
       \assert($inputs_typed_data instanceof ComponentInputs);
+      // @todo Translatability is version-derived: a key that becomes
+      //   non-translatable in the new version must drop from the sparse
+      //   override. Today that change is only reachable via a BC break (an
+      //   unsafe change, which canUpdate() blocks), so it cannot be exercised
+      //   here. Add the test when safe translatability changes become possible:
+      //   https://git.drupalcode.org/project/canvas/-/work_items/3587711
       $translatable = \array_flip($inputs_typed_data->getTranslatableInputKeys());
       $item_inputs = $item->getInputs() ?? [];
       $new = \array_intersect_key($item_inputs, $translatable, $prior_inputs);
