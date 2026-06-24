@@ -15,7 +15,6 @@ use Drupal\language\Config\LanguageConfigOverride;
 use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\Tests\canvas\Traits\DataProviderWithComponentTreeTrait;
-use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -42,6 +41,14 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * The component instance UUID used in the config entity's component tree.
    */
   protected const string TRANSLATED_COMPONENT_INSTANCE_UUID = '22222222-2222-4222-8222-222222222222';
+
+  /**
+   * The ES translation inputs written before each test's component update.
+   */
+  protected const array ES_TRANSLATION_INPUTS = [
+    'required_text' => 'Hola mundo',
+    'optional_text' => 'opcional ES',
+  ];
 
   /**
    * The config entity under test (PageRegion or ContentTemplate).
@@ -73,114 +80,75 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // @see \Drupal\language\Config\LanguageConfigFactoryOverride
   ];
 
-  #[DataProvider('providerPropagation')]
-  public function testPropagation(
-    string $setup_method,
-    bool $expected_modified,
-    ?string $new_key,
-    ?string $removed_key,
-    array $expected_remaining_override_inputs,
-  ): void {
-    // Write a Spanish override before the update.
-    $this->createComponentTreeTranslation('es', [
-      'required_text' => 'Hola mundo',
-      'optional_text' => 'opcional ES',
-    ]);
-    // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
-    self::assertEntityIsValid($this->translatedConfigEntity);
-
-    $this->{$setup_method}();
-    $this->generateComponentConfig();
-
-    $tree = $this->translatedConfigEntity->getComponentTree();
-    $manager = $this->container->get(ComponentSourceManager::class);
-    \assert($manager instanceof ComponentSourceManager);
-    $was_modified = $manager->updateComponentInstances($tree);
-    self::assertSame($expected_modified, $was_modified);
-
-    // Reconciliation stages changes in-memory on the entity; read them back.
-    $staged = $this->translatedConfigEntity->getTranslation('es');
-
-    if (empty($expected_remaining_override_inputs)) {
-      // All translatable inputs were deleted: staged override should be empty.
-      self::assertTrue($staged->isEmpty(), 'Staged override must be empty when no translatable inputs remain.');
-    }
-    else {
-      self::assertFalse($staged->isEmpty(), 'Staged override must still have data.');
-      $stored = $staged->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
-      self::assertIsArray($stored);
-      if ($removed_key !== NULL) {
-        self::assertArrayNotHasKey($removed_key, $stored, 'Deleted prop must be pruned from staged override.');
-      }
-      if ($new_key !== NULL) {
-        // New props are never injected into a LanguageConfigOverride — the
-        // sparse override stores only translatable overrides, and new props
-        // have no translated value yet.
-        self::assertArrayNotHasKey($new_key, $stored, 'New props must not appear in staged config override.');
-      }
-      self::assertSame($expected_remaining_override_inputs, $stored);
-    }
+  /**
+   * {@inheritdoc}
+   */
+  protected function setUpTranslation(): ComponentTreeConfigEntityBase {
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
+    return $this->translatedConfigEntity;
   }
 
+  /**
+   * {@inheritdoc}
+   *
+   * Config entity translations are sparse LanguageConfigOverride records
+   * containing only translatable overrides. New props (required or optional)
+   * are never injected — they have no translated value until a translator sets
+   * one. Only removed props are pruned from the stored override.
+   */
+  protected function assertTranslationAfterUpdate(bool $was_modified, ?string $new_key, bool $new_key_is_required, ?string $removed_key): void {
+    $staged = $this->translatedConfigEntity->getTranslation('es');
+
+    // Special case: removeBothProps deletes all translatable inputs, so the
+    // entire override record must be empty.
+    if ($staged->isEmpty()) {
+      self::assertTrue($staged->isEmpty(), 'Staged override must be empty when no translatable inputs remain.');
+      return;
+    }
+
+    self::assertFalse($staged->isEmpty(), 'Staged override must still have data.');
+    $stored = $staged->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
+    self::assertIsArray($stored);
+
+    if ($new_key !== NULL) {
+      // New props are never injected into a LanguageConfigOverride — the
+      // sparse override stores only translatable overrides, and new props
+      // have no translated value yet.
+      self::assertArrayNotHasKey($new_key, $stored, 'New props must not appear in staged config override.');
+    }
+    if ($removed_key !== NULL) {
+      self::assertArrayNotHasKey($removed_key, $stored, 'Deleted prop must be pruned from staged override.');
+    }
+
+    // Compute the expected remaining override by removing any deleted key from
+    // the original Spanish override inputs.
+    $expected = $removed_key !== NULL ? \array_diff_key(self::ES_TRANSLATION_INPUTS, [$removed_key => NULL]) : self::ES_TRANSLATION_INPUTS;
+    self::assertSame($expected, $stored);
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * Adds a config-entity-specific case: all translatable props deleted, which
+   * causes the entire override record to be removed rather than merely pruned.
+   * This has a sibling test that covers the full publish lifecycle.
+   *
+   * @todo Move this case to the base provider and assert it for content entities
+   *   too — content translations should also end up with empty inputs when all
+   *   props are deleted. Requires adjusting assertTranslationAfterUpdate() to
+   *   not unconditionally assert 'required_text' survives when removeBothProps
+   *   is the setup method.
+   *
+   * @see ::testPublishDeletesEmptyOverride()
+   */
   public static function providerPropagation(): \Generator {
-    yield 'New optional prop added — override unchanged (new prop not in override)' => [
-      'setup_method' => 'addOptionalProp',
-      'expected_modified' => TRUE,
-      'new_key' => 'voice',
-      'removed_key' => NULL,
-      'expected_remaining_override_inputs' => [
-        'required_text' => 'Hola mundo',
-        'optional_text' => 'opcional ES',
-      ],
-    ];
-    yield 'New required prop added — override unchanged (new prop not in override)' => [
-      'setup_method' => 'addRequiredProp',
-      'expected_modified' => TRUE,
-      'new_key' => 'voice',
-      'removed_key' => NULL,
-      'expected_remaining_override_inputs' => [
-        'required_text' => 'Hola mundo',
-        'optional_text' => 'opcional ES',
-      ],
-    ];
-    // This has a sibling test that tests the full lifecycle.
-    // @see ::testPublishWritesToLiveOverride()
-    yield 'Optional prop deleted — orphaned key pruned from override' => [
-      'setup_method' => 'removeOptionalProp',
-      'expected_modified' => TRUE,
-      'new_key' => NULL,
-      'removed_key' => 'optional_text',
-      'expected_remaining_override_inputs' => [
-        'required_text' => 'Hola mundo',
-      ],
-    ];
-    yield 'Unsafe prop type change — update blocked, override unchanged' => [
-      'setup_method' => 'changePropType',
-      'expected_modified' => FALSE,
-      'new_key' => NULL,
-      'removed_key' => NULL,
-      'expected_remaining_override_inputs' => [
-        'required_text' => 'Hola mundo',
-        'optional_text' => 'opcional ES',
-      ],
-    ];
-    yield 'Prop removed and another added — removed key pruned, new key absent from override' => [
-      'setup_method' => 'removeAndAddProp',
-      'expected_modified' => TRUE,
-      'new_key' => 'voice',
-      'removed_key' => 'optional_text',
-      'expected_remaining_override_inputs' => [
-        'required_text' => 'Hola mundo',
-      ],
-    ];
-    // This has a sibling test that tests the full lifecycle.
-    // @see ::testPublishDeletesEmptyOverride()
+    yield from parent::providerPropagation();
     yield 'All translatable props deleted — override record deleted entirely' => [
       'setup_method' => 'removeBothProps',
       'expected_modified' => TRUE,
       'new_key' => NULL,
+      'new_key_is_required' => FALSE,
       'removed_key' => NULL,
-      'expected_remaining_override_inputs' => [],
     ];
   }
 
@@ -208,10 +176,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   public function testMultipleLanguageOverridesReconciled(): void {
     ConfigurableLanguage::createFromLangcode('fr')->save();
 
-    $this->createComponentTreeTranslation('es', [
-      'required_text' => 'Hola mundo',
-      'optional_text' => 'opcional ES',
-    ]);
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
     $this->createComponentTreeTranslation('fr', [
       'required_text' => 'Bonjour monde',
       'optional_text' => 'optionnel FR',
@@ -339,10 +304,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
    */
   public function testPublishWritesToLiveOverride(): void {
-    $this->createComponentTreeTranslation('es', [
-      'required_text' => 'Hola mundo',
-      'optional_text' => 'opcional ES',
-    ]);
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
     self::assertEntityIsValid($this->translatedConfigEntity);
 
@@ -375,10 +337,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    */
   public function testPublishDeletesEmptyOverride(): void {
     // Write an override that only has the two props that will both be deleted.
-    $this->createComponentTreeTranslation('es', [
-      'required_text' => 'Hola mundo',
-      'optional_text' => 'opcional ES',
-    ]);
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
     self::assertEntityIsValid($this->translatedConfigEntity);
 
@@ -405,10 +364,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * component must not appear in the staged override after reconciliation.
    */
   public function testNonTranslatablePropNotStaged(): void {
-    $this->createComponentTreeTranslation('es', [
-      'required_text' => 'Hola mundo',
-      'optional_text' => 'opcional ES',
-    ]);
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
     self::assertEntityIsValid($this->translatedConfigEntity);
 

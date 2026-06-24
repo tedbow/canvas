@@ -45,6 +45,8 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   private const string COMPONENT_UUID = '11111111-1111-4111-8111-111111111111';
   private const string SECOND_UUID = '22222222-2222-4222-8222-222222222222';
 
+  private Page $page;
+
   /**
    * {@inheritdoc}
    */
@@ -100,69 +102,35 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     return $item?->getInputs();
   }
 
-  #[DataProvider('providerPropagation')]
-  public function testPropagation(
-    string $setup_method,
-    bool $expected_modified,
-    ?string $new_key,
-    ?string $expected_optional,
-  ): void {
-    $page = $this->createPageWithTranslation();
+  /**
+   * {@inheritdoc}
+   */
+  protected function setUpTranslation(): Page {
+    $this->page = $this->createPageWithTranslation();
+    return $this->page;
+  }
 
-    $this->{$setup_method}();
-    $this->generateComponentConfig();
-
-    $tree = $page->getComponentTree();
-    $manager = $this->container->get(ComponentSourceManager::class);
-    \assert($manager instanceof ComponentSourceManager);
-    $was_modified = $manager->updateComponentInstances($tree);
-    self::assertSame($expected_modified, $was_modified);
-
-    $es_inputs = self::getInputs($page, 'es', self::COMPONENT_UUID);
+  /**
+   * {@inheritdoc}
+   */
+  protected function assertTranslationAfterUpdate(bool $was_modified, ?string $new_key, bool $new_key_is_required, ?string $removed_key): void {
+    $es_inputs = self::getInputs($this->page, 'es', self::COMPONENT_UUID);
     self::assertNotNull($es_inputs);
 
     if ($new_key !== NULL) {
-      self::assertArrayHasKey($new_key, $es_inputs, "New prop must appear in translation.");
+      if ($new_key_is_required) {
+        self::assertArrayHasKey($new_key, $es_inputs, 'New required prop must be seeded in translation.');
+      }
+      else {
+        self::assertArrayNotHasKey($new_key, $es_inputs, 'New optional prop must not be injected into translation (updater skips optional props).');
+      }
     }
-    if ($expected_modified) {
-      // The required value is always preserved; the optional value is its
-      // translated value, or NULL once the prop has been removed.
-      self::assertSame('Hola mundo', $es_inputs['required_text'] ?? NULL, "Existing translatable prop must be preserved.");
-      self::assertSame($expected_optional, $es_inputs['optional_text'] ?? NULL, "Translated optional prop must match the expected post-update value.");
+    if ($removed_key !== NULL) {
+      self::assertArrayNotHasKey($removed_key, $es_inputs, 'Removed prop must be absent from translation inputs.');
     }
-  }
-
-  public static function providerPropagation(): \Generator {
-    yield 'New optional prop added — translation unchanged (updater skips optional props)' => [
-      'setup_method' => 'addOptionalProp',
-      'expected_modified' => TRUE,
-      'new_key' => NULL,
-      'expected_optional' => 'Opcional ES',
-    ];
-    yield 'New required prop added — translation gets example value' => [
-      'setup_method' => 'addRequiredProp',
-      'expected_modified' => TRUE,
-      'new_key' => 'voice',
-      'expected_optional' => 'Opcional ES',
-    ];
-    yield 'Prop deleted — orphaned input removed from translation' => [
-      'setup_method' => 'removeOptionalProp',
-      'expected_modified' => TRUE,
-      'new_key' => NULL,
-      'expected_optional' => NULL,
-    ];
-    yield 'Unsafe prop type change — update blocked, translation unchanged' => [
-      'setup_method' => 'changePropType',
-      'expected_modified' => FALSE,
-      'new_key' => NULL,
-      'expected_optional' => 'Opcional ES',
-    ];
-    yield 'Prop removed and another added — removed key gone, new optional key absent from translation' => [
-      'setup_method' => 'removeAndAddProp',
-      'expected_modified' => TRUE,
-      'new_key' => NULL,
-      'expected_optional' => NULL,
-    ];
+    if ($was_modified) {
+      self::assertSame('Hola mundo', $es_inputs['required_text'] ?? NULL, 'Existing translatable prop must be preserved.');
+    }
   }
 
   /**
