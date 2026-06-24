@@ -415,7 +415,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   /**
    * Tests StagedLanguageConfigOverride access delegates to its base entity.
    *
-   * create/update/delete defer to the base config entity's `update` access;
+   * Create/update/delete defer to the base config entity's `update` access;
    * `view` defers to Canvas UI access. Access is forbidden when the target
    * config entity does not exist or is not a config entity.
    *

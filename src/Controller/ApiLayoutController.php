@@ -205,13 +205,16 @@ final class ApiLayoutController {
         // component instances updated, too. They must remain in sync, so also
         // save the updated translations.
         // @see ADR #13, decision 4: propagation is in-memory only.
-        // For content entities $entity may be a non-default translation; for
-        // config entities $entity is always the default translation.
-        $default = $entity instanceof ContentEntityInterface ? $entity->getUntranslated() : $entity;
-        \assert($default instanceof ContentEntityInterface || $default instanceof ComponentTreeConfigEntityBase);
-        $this->autoSaveManager->saveEntity($default);
-        foreach ($default->getTranslationLanguages(include_default: FALSE) as $language) {
-          $this->autoSaveManager->saveEntity($default->getTranslation($language->getId()));
+        $this->autoSaveManager->saveEntity($entity instanceof ContentEntityInterface
+          // For content entities $entity may be a non-default translation.
+          ? $entity->getUntranslated()
+          // For config entities, $entity is always the default translation.
+          : $entity
+        );
+        if ($entity instanceof ComponentTreeConfigEntityBase || $entity instanceof ContentEntityInterface) {
+          foreach ($entity->getTranslationLanguages(include_default: FALSE) as $language) {
+            $this->autoSaveManager->saveEntity($entity->getTranslation($language->getId()));
+          }
         }
       }
 

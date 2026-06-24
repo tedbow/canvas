@@ -512,7 +512,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Previews the requested translation, creating the necesary auto-saves.
+   * Previews the requested translation, creating the necessary auto-saves.
    *
    * @param int|string $page_id
    *   The Page entity ID.

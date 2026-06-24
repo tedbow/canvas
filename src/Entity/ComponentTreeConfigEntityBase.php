@@ -306,8 +306,8 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
     // that reconstructed draft, and callers (e.g. component-instance
     // reconciliation) mutate the returned override. Mutating the memoized
     // instance would corrupt the baseline AutoSaveManager::saveEntity() reads
-    // back via loadUnchanged(), making a reconciled save look like a no-op reset
-    // that drops the entry.
+    // back via loadUnchanged(), making a reconciled save look like a no-op
+    // reset that drops the entry.
     $this->stagedOverrides[$langcode] = clone StagedLanguageConfigOverride::fromLanguageConfigOverride($override);
     return $this->stagedOverrides[$langcode];
   }

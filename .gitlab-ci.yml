@@ -370,7 +370,6 @@ lint (node):
       fi
 
 phpunit (11.2 sqlite):
-  needs: []
   rules:
     - *push-rule
     - <<: *mr-rule
