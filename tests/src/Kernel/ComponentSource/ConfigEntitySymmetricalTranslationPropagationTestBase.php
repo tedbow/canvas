@@ -38,6 +38,12 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   use DataProviderWithComponentTreeTrait;
 
   /**
+   * @var \Drupal\canvas\Entity\ComponentTreeConfigEntityBase
+   * @phpstan-ignore-next-line property.phpDocType
+   */
+  protected $entity;
+
+  /**
    * The component instance UUID used in the config entity's component tree.
    */
   protected const string TRANSLATED_COMPONENT_INSTANCE_UUID = '22222222-2222-4222-8222-222222222222';
@@ -49,11 +55,6 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     'required_text' => 'Hola mundo',
     'optional_text' => 'opcional ES',
   ];
-
-  /**
-   * The config entity under test (PageRegion or ContentTemplate).
-   */
-  protected ComponentTreeConfigEntityBase $translatedConfigEntity;
 
   /**
    * @var ComponentTreeItemListArray
@@ -85,7 +86,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    */
   protected function setUpTranslation(): ComponentTreeConfigEntityBase {
     $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
-    return $this->translatedConfigEntity;
+    return $this->entity;
   }
 
   /**
@@ -97,7 +98,8 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * one. Only removed props are pruned from the stored override.
    */
   protected function assertTranslationAfterUpdate(bool $was_modified, ?string $new_key, bool $new_key_is_required, ?string $removed_key): void {
-    $staged = $this->translatedConfigEntity->getTranslation('es');
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
+    $staged = $this->entity->getTranslation('es');
 
     // Special case: removeBothProps deletes all translatable inputs, so the
     // entire override record must be empty.
@@ -156,24 +158,26 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * Tests that a translation with no prior override is skipped gracefully.
    */
   public function testNoOverrideSkipped(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     // Do NOT write an override — the language exists but has no translation.
     $this->addOptionalProp();
     $this->generateComponentConfig();
 
-    $tree = $this->translatedConfigEntity->getComponentTree();
+    $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
     \assert($manager instanceof ComponentSourceManager);
     $was_modified = $manager->updateComponentInstances($tree);
     self::assertTrue($was_modified);
 
     // No override existed before — reconciliation must not populate a staged one.
-    self::assertTrue($this->translatedConfigEntity->getTranslation('es')->isEmpty(), 'No staged override should be created for a language with no prior translation.');
+    self::assertTrue($this->entity->getTranslation('es')->isEmpty(), 'No staged override should be created for a language with no prior translation.');
   }
 
   /**
    * Tests that all LanguageConfigOverrides for the entity are updated together.
    */
   public function testMultipleLanguageOverridesReconciled(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     ConfigurableLanguage::createFromLangcode('fr')->save();
 
     $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
@@ -184,22 +188,22 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     self::assertHasStoredTranslation('es');
     self::assertHasStoredTranslation('fr');
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
-    self::assertEntityIsValid($this->translatedConfigEntity);
+    self::assertEntityIsValid($this->entity);
 
     $this->removeOptionalProp();
     $this->generateComponentConfig();
 
-    $tree = $this->translatedConfigEntity->getComponentTree();
+    $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
     $was_modified = $manager->updateComponentInstances($tree);
     self::assertTrue($was_modified);
 
     // Both staged overrides should have optional_text pruned in-memory.
-    $es_stored = $this->translatedConfigEntity->getTranslation('es')
+    $es_stored = $this->entity->getTranslation('es')
       ->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
     self::assertSame(['required_text' => 'Hola mundo'], $es_stored);
 
-    $fr_stored = $this->translatedConfigEntity->getTranslation('fr')
+    $fr_stored = $this->entity->getTranslation('fr')
       ->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
     self::assertSame(['required_text' => 'Bonjour monde'], $fr_stored);
   }
@@ -229,18 +233,19 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    *   in-memory, pre-publish state if needed.
    */
   protected function updateAndPublishOverrides(string $assert_langcode = 'es'): StagedLanguageConfigOverride {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     // Router must be built before UserCreationTrait::setUpCurrentUser()
     // triggers FilterPermissions::permissions()  URL generation.
     $this->container->get('router.builder')->rebuild();
 
-    $admin_permission = $this->translatedConfigEntity->getEntityType()->getAdminPermission();
+    $admin_permission = $this->entity->getEntityType()->getAdminPermission();
     \assert(\is_string($admin_permission));
     $this->setUpCurrentUser([], [
       $admin_permission,
       AutoSaveManager::PUBLISH_PERMISSION,
     ]);
 
-    $tree = $this->translatedConfigEntity->getComponentTree();
+    $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
     \assert($manager instanceof ComponentSourceManager);
     $manager->updateComponentInstances($tree);
@@ -251,7 +256,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // Stage the translation override BEFORE setComponentTree() — the latter
     // clears stagedOverrides, so a subsequent getTranslation() would re-read
     // un-pruned data from live config, discarding the reconciliation.
-    $staged = $this->translatedConfigEntity->getTranslation($assert_langcode);
+    $staged = $this->entity->getTranslation($assert_langcode);
     self::assertTrue($staged->isNew());
     self::assertFalse($staged->status());
     $staged->save();
@@ -261,23 +266,23 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // that the StagedLanguageConfigOverride has been saved.
     self::assertFalse($staged->isNew());
     self::assertFalse($staged->status());
-    self::assertFalse($this->translatedConfigEntity->getTranslation($assert_langcode)->isNew());
+    self::assertFalse($this->entity->getTranslation($assert_langcode)->isNew());
 
     // Stage the updated base entity.
-    $this->translatedConfigEntity->setComponentTree($tree->getValue());
-    self::assertFalse($this->translatedConfigEntity->getTranslation($assert_langcode)->isNew());
+    $this->entity->setComponentTree($tree->getValue());
+    self::assertFalse($this->entity->getTranslation($assert_langcode)->isNew());
     // Validate the StagedLanguageConfigOverride; it is minimally validated.
     // @see canvas.schema.yml, `canvas.staged_language_config_override.*:data`.
     self::assertEntityIsValid($staged);
-    self::assertEntityIsValid($this->translatedConfigEntity);
-    $auto_save_manager->saveEntity($this->translatedConfigEntity);
+    self::assertEntityIsValid($this->entity);
+    $auto_save_manager->saveEntity($this->entity);
 
     // Both the translated config entity and the Spanish
     // StagedLanguageConfigOverride must now be in auto-save storage.
     // @todo 🚧 The StagedLanguageConfigOverrides should NOT appear in this list, to match the behavior for content entities introduced in https://git.drupalcode.org/project/canvas/-/work_items/3591704
     $all_auto_saves = $auto_save_manager->getAllAutoSaveList(FALSE, FALSE);
     self::assertSame([
-      AutoSaveManager::getAutoSaveKey($this->translatedConfigEntity),
+      AutoSaveManager::getAutoSaveKey($this->entity),
       AutoSaveManager::getAutoSaveKey($staged),
     ], \array_keys($all_auto_saves));
 
@@ -304,9 +309,10 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
    */
   public function testPublishWritesToLiveOverride(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
-    self::assertEntityIsValid($this->translatedConfigEntity);
+    self::assertEntityIsValid($this->entity);
 
     $this->removeOptionalProp();
     $this->generateComponentConfig();
@@ -317,7 +323,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // removed and required_text preserved.
     $language_manager = \Drupal::languageManager();
     \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    $live = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
+    $live = $language_manager->getLanguageConfigOverride('es', $this->entity->getConfigDependencyName());
     \assert($live instanceof LanguageConfigOverride);
     self::assertFalse($live->isNew(), 'Live override must still exist after partial reconciliation.');
     $inputs = $live->get('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
@@ -336,10 +342,11 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
    */
   public function testPublishDeletesEmptyOverride(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     // Write an override that only has the two props that will both be deleted.
     $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
-    self::assertEntityIsValid($this->translatedConfigEntity);
+    self::assertEntityIsValid($this->entity);
 
     $this->removeBothProps();
     $this->generateComponentConfig();
@@ -350,7 +357,7 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     // Live LanguageConfigOverride must be deleted when the staged override is empty.
     $language_manager = \Drupal::languageManager();
     \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    $live = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
+    $live = $language_manager->getLanguageConfigOverride('es', $this->entity->getConfigDependencyName());
     \assert($live instanceof LanguageConfigOverride);
     self::assertTrue($live->isNew(), 'Live override must be deleted when staged override is empty.');
     self::assertSame([], $live->getRawData());
@@ -364,9 +371,10 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    * component must not appear in the staged override after reconciliation.
    */
   public function testNonTranslatablePropNotStaged(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
-    self::assertEntityIsValid($this->translatedConfigEntity);
+    self::assertEntityIsValid($this->entity);
 
     // Add a new enum (non-translatable) optional prop.
     $props = $this->jsComponent->getProps();
@@ -380,12 +388,12 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
     $this->jsComponent->setProps($props)->save();
     $this->generateComponentConfig();
 
-    $tree = $this->translatedConfigEntity->getComponentTree();
+    $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
     \assert($manager instanceof ComponentSourceManager);
     $manager->updateComponentInstances($tree);
 
-    $staged = $this->translatedConfigEntity->getTranslation('es');
+    $staged = $this->entity->getTranslation('es');
     $inputs = $staged->getData('component_tree.' . static::TRANSLATED_COMPONENT_INSTANCE_UUID . '.inputs');
     self::assertIsArray($inputs);
     self::assertArrayNotHasKey('alignment', $inputs, 'Non-translatable enum prop must not appear in staged override.');
@@ -395,9 +403,10 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   }
 
   private function getStoredTranslation(string $langcode): LanguageConfigOverride {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     $language_manager = \Drupal::languageManager();
     \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    return $language_manager->getLanguageConfigOverride($langcode, $this->translatedConfigEntity->getConfigDependencyName());
+    return $language_manager->getLanguageConfigOverride($langcode, $this->entity->getConfigDependencyName());
   }
 
   protected function assertHasStoredTranslation(string $langcode): void {

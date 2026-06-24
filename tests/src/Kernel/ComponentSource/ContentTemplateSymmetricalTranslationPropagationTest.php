@@ -7,6 +7,7 @@ namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 // cspell:ignore Hola mundo opcional ranura prueba
 
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
+use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
 use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage;
 use Drupal\language\Config\LanguageConfigOverride;
@@ -50,7 +51,7 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
 
     NodeType::create(['type' => 'helpful', 'name' => 'Helpful'])->save();
 
-    $this->translatedConfigEntity = ContentTemplate::create([
+    $this->entity = ContentTemplate::create([
       'content_entity_type_id' => 'node',
       'content_entity_type_bundle' => 'helpful',
       'content_entity_type_view_mode' => 'full',
@@ -63,8 +64,8 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
         ],
       ],
     ]);
-    self::assertEntityIsValid($this->translatedConfigEntity);
-    self::assertSame(SAVED_NEW, $this->translatedConfigEntity->save());
+    self::assertEntityIsValid($this->entity);
+    self::assertSame(SAVED_NEW, $this->entity->save());
   }
 
   /**
@@ -81,11 +82,12 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
    * @legacy-covers \Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage
    */
   public function testExposedSlotLabelOverridePreserved(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
     // Write a Spanish override that includes both component_tree and
     // exposed_slots translations.
     $language_manager = \Drupal::languageManager();
     \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
-    $override = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
+    $override = $language_manager->getLanguageConfigOverride('es', $this->entity->getConfigDependencyName());
     \assert($override instanceof LanguageConfigOverride);
     $override->set('component_tree', [
       static::TRANSLATED_COMPONENT_INSTANCE_UUID => [
@@ -97,21 +99,21 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     $override->set('exposed_slots.test_slot.label', 'ranura de prueba');
     $override->save();
     // @see \Drupal\canvas\Plugin\Validation\Constraint\CanvasConfigEntityTranslationsAreValidConstraintValidator
-    self::assertEntityIsValid($this->translatedConfigEntity);
+    self::assertEntityIsValid($this->entity);
 
     // Delete BOTH translatable props — this empties the component_tree side of
     // the override on reconciliation.
     $this->removeBothProps();
     $this->generateComponentConfig();
 
-    $tree = $this->translatedConfigEntity->getComponentTree();
+    $tree = $this->entity->getComponentTree();
     $manager = $this->container->get(ComponentSourceManager::class);
     \assert($manager instanceof ComponentSourceManager);
     $manager->updateComponentInstances($tree);
 
     // Staged reconciliation: the emptied component_tree is pruned, but the slot
     // label survives, so the staged override is not empty.
-    $staged = $this->translatedConfigEntity->getTranslation('es');
+    $staged = $this->entity->getTranslation('es');
     self::assertNull($staged->getData('component_tree'), 'Emptied component_tree must be pruned from the staged override.');
     self::assertSame('ranura de prueba', $staged->getData('exposed_slots.test_slot.label'), 'Exposed slot label override must survive reconciliation.');
     self::assertFalse($staged->isEmpty(), 'Staged override must not be empty while the slot label remains.');
@@ -119,7 +121,7 @@ final class ContentTemplateSymmetricalTranslationPropagationTest extends ConfigE
     // After publishing, the live override must NOT be deleted: only the
     // translated slot label remains.
     $this->updateAndPublishOverrides();
-    $live = $language_manager->getLanguageConfigOverride('es', $this->translatedConfigEntity->getConfigDependencyName());
+    $live = $language_manager->getLanguageConfigOverride('es', $this->entity->getConfigDependencyName());
     \assert($live instanceof LanguageConfigOverride);
     self::assertFalse($live->isNew(), 'Override must survive because a non-tree translation (slot label) remains.');
     self::assertSame('ranura de prueba', $live->get('exposed_slots.test_slot.label'), 'Translated slot label must survive publish.');

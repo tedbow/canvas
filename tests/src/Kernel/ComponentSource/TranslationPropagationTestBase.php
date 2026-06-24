@@ -46,6 +46,11 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
   protected string $originalVersion;
 
   /**
+   * @var \Drupal\canvas\Entity\ComponentTreeConfigEntityBase|\Drupal\Core\Entity\ContentEntityInterface
+   */
+  protected $entity;
+
+  /**
    * {@inheritdoc}
    */
   protected function setUp(): void {
@@ -144,15 +149,15 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     bool $new_key_is_required,
     ?string $removed_key,
   ): void {
-    $entity = $this->setUpTranslation();
-    self::assertEntityIsValid($entity);
+    $this->entity = $this->setUpTranslation();
+    self::assertEntityIsValid($this->entity);
 
     $this->{$setup_method}();
     $this->generateComponentConfig();
 
     $loader = $this->container->get(ComponentTreeLoader::class);
     \assert($loader instanceof ComponentTreeLoader);
-    $tree = $loader->load($entity);
+    $tree = $loader->load($this->entity);
     $manager = $this->container->get(ComponentSourceManager::class);
     \assert($manager instanceof ComponentSourceManager);
     $was_modified = $manager->updateComponentInstances($tree);

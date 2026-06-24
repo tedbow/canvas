@@ -33,13 +33,13 @@ final class PageRegionSymmetricalTranslationPropagationTest extends ConfigEntity
     $this->installEntitySchema('user');
     $this->installEntitySchema('path_alias');
 
-    $this->translatedConfigEntity = PageRegion::create([
+    $this->entity = PageRegion::create([
       'theme' => 'stark',
       'region' => 'sidebar_first',
       'component_tree' => self::populateActiveComponentVersionPlaceholders($this->translatableComponentTree),
     ]);
-    self::assertEntityIsValid($this->translatedConfigEntity);
-    self::assertSame(SAVED_NEW, $this->translatedConfigEntity->save());
+    self::assertEntityIsValid($this->entity);
+    self::assertSame(SAVED_NEW, $this->entity->save());
   }
 
 }

@@ -42,10 +42,14 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     'content_translation',
   ];
 
+  /**
+   * @var \Drupal\Core\Entity\ContentEntityInterface
+   * @phpstan-ignore-next-line property.phpDocType
+   */
+  protected $entity;
+
   private const string COMPONENT_UUID = '11111111-1111-4111-8111-111111111111';
   private const string SECOND_UUID = '22222222-2222-4222-8222-222222222222';
-
-  private Page $page;
 
   /**
    * {@inheritdoc}
@@ -106,15 +110,16 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
    * {@inheritdoc}
    */
   protected function setUpTranslation(): Page {
-    $this->page = $this->createPageWithTranslation();
-    return $this->page;
+    $this->entity = $this->createPageWithTranslation();
+    return $this->entity;
   }
 
   /**
    * {@inheritdoc}
    */
   protected function assertTranslationAfterUpdate(bool $was_modified, ?string $new_key, bool $new_key_is_required, ?string $removed_key): void {
-    $es_inputs = self::getInputs($this->page, 'es', self::COMPONENT_UUID);
+    \assert($this->entity instanceof Page);
+    $es_inputs = self::getInputs($this->entity, 'es', self::COMPONENT_UUID);
     self::assertNotNull($es_inputs);
 
     if ($new_key !== NULL) {
