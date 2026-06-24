@@ -519,9 +519,9 @@ final class ApiAutoSaveController extends ApiControllerBase {
    * time in AutoSaveManager because it calls loadUnchanged() and applies
    * field-level changes onto the stored entity — an inherently publish-specific
    * operation. Contrast with config entities, where coalescing is
-   * non-destructive and therefore happens in AutoSaveManager at reconstruction
-   * time (AutoSaveManager::injectStagedLanguageConfigOverrides()), making the
-   * coalesced state available to every caller, not only publishing.
+   * non-destructive and therefore happens at load time in
+   * ComponentTreeConfigEntityBase::getTranslation(), making the coalesced state
+   * available to every caller, not only publishing.
    *
    * @param \Drupal\Core\Entity\ContentEntityInterface[] $snapshots
    *   Auto-save snapshots for the same entity, one per edited translation.
