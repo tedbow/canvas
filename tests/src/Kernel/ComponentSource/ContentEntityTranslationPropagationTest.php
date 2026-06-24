@@ -10,6 +10,7 @@ use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Controller\ApiAutoSaveController;
 use Drupal\canvas\Controller\ApiLayoutController;
+use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\language\Entity\ConfigurableLanguage;
@@ -511,29 +512,22 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Previews each given translation, creating a reconciled auto-save for each.
-   *
-   * Mirrors the editor loading each language in turn: every GET runs
-   * updateComponentInstances() and, when that reports a change, persists the
-   * translation's reconciled tree as a per-translation auto-save. Each preview
-   * uses a freshly loaded entity, as a real request would.
+   * Previews the requested translation, creating the necesary auto-saves.
    *
    * @param int|string $page_id
    *   The Page entity ID.
-   * @param string[] $langcodes
-   *   The translation langcodes to preview.
+   * @param string $langcode
+   *   The translation langcode to preview.
    */
-  private static function previewTranslations(int|string $page_id, array $langcodes): void {
+  private static function previewTranslation(int|string $page_id, string $langcode): void {
     $layout_controller = \Drupal::classResolver(ApiLayoutController::class);
     \assert($layout_controller instanceof ApiLayoutController);
-    foreach ($langcodes as $langcode) {
-      \Drupal::entityTypeManager()->getStorage('component')->resetCache();
-      \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
-      $reloaded = Page::load($page_id);
-      \assert($reloaded instanceof Page);
-      $translation = $reloaded->hasTranslation($langcode) ? $reloaded->getTranslation($langcode) : $reloaded;
-      $layout_controller->get($translation);
-    }
+    \Drupal::entityTypeManager()->getStorage(Component::ENTITY_TYPE_ID)->resetCache();
+    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
+    $reloaded = Page::load($page_id);
+    \assert($reloaded instanceof Page);
+    $translation = $reloaded->hasTranslation($langcode) ? $reloaded->getTranslation($langcode) : $reloaded;
+    $layout_controller->get($translation);
   }
 
   /**
@@ -556,9 +550,8 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     // New required prop → new component version.
     $this->addRequiredProp();
 
-    // Preview both translations; each creates its own reconciled auto-save.
-    self::previewTranslations($page_id, ['en', 'es']);
-
+    // Previewing a translation creates an auto-save for translation + default.
+    self::previewTranslation($page_id, 'es');
     self::assertCount(2, $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE), 'Previewing both translations creates an auto-save for each.');
 
     // The ES auto-save carries the reconciled inputs (new required prop +
@@ -579,10 +572,10 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   /**
    * Publishing the reconciled translations applies the new version to all.
    *
-   * After a component version change, each previewed translation has a
-   * reconciled auto-save. Publishing them applies the new version and the
-   * reconciled inputs to every selected translation, with translatable values
-   * preserved.
+   * After a component version change, only previewing the default translation
+   * creates a reconciled auto-save also for the `es` translation. Publishing
+   * only the default translation applies the new version and the reconciled
+   * inputs to all translations, with translatable values preserved.
    *
    * @param string[] $selected_langcodes
    *   The translations selected to publish.
@@ -601,8 +594,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     // New required prop → new component version.
     $this->addRequiredProp();
 
-    // Preview both translations so each has a reconciled auto-save.
-    self::previewTranslations($page_id, ['en', 'es']);
+    self::previewTranslation($page_id, 'en');
 
     $auto_save_manager = $this->container->get(AutoSaveManager::class);
     \assert($auto_save_manager instanceof AutoSaveManager);
@@ -695,7 +687,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     // Only EN is re-previewed, so only its auto-save is reconciled; the ES
     // auto-save is left at the original version.
-    self::previewTranslations($page_id, ['en']);
+    self::previewTranslation($page_id, 'en');
 
     // Sanity: the stored ES auto-save is still at the original version, carrying
     // the now-deleted optional_text.
@@ -765,7 +757,7 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     $this->addRequiredProp();
 
-    self::previewTranslations($page_id, ['en', 'es']);
+    self::previewTranslation($page_id, 'en');
 
     $auto_save_manager = $this->container->get(AutoSaveManager::class);
     \assert($auto_save_manager instanceof AutoSaveManager);
