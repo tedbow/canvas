@@ -32,6 +32,7 @@ use Symfony\Component\HttpFoundation\Response;
 #[Group('canvas_component_sources')]
 #[Group('canvas_data_model')]
 #[Group('canvas_translation')]
+#[Group('slow')]
 final class ContentEntityTranslationPropagationTest extends TranslationPropagationTestBase {
 
   /**

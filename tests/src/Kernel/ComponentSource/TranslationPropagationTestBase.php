@@ -130,6 +130,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     $props = $this->jsComponent->getProps();
     \assert($props !== NULL);
     \assert(\array_key_exists('optional_text', $props));
+    \assert(!\array_key_exists('voice', $props));
     unset($props['optional_text']);
     $props['voice'] = ['type' => 'string', 'title' => 'Voice', 'examples' => ['polite']];
     $this->jsComponent->setProps($props)->save();
@@ -140,6 +141,7 @@ abstract class TranslationPropagationTestBase extends CanvasKernelTestBase {
     \assert($props !== NULL);
     \assert(\array_key_exists('optional_text', $props));
     \assert(\array_key_exists('required_text', $props));
+    \assert(!\array_key_exists('count', $props));
     unset($props['required_text'], $props['optional_text']);
     $props['count'] = ['type' => 'integer', 'title' => 'Count', 'examples' => [3]];
     $this->jsComponent->setProps($props)->set('required', [])->save();
