@@ -60,14 +60,7 @@ final class CanvasConfigEntityTranslationsAreValidConstraintValidator extends Co
     // saving: it'd compare the staged config translations to the stored config
     // entity instead of the given entity (e.g. an auto-saved one).
     $base_data = $value->toArray();
-    // @see \Drupal\canvas\Entity\ComponentTreeConfigEntityBase::preSave()
-    // Note: if Canvas ever wants to allow arbitrary config entity types to
-    // contain Canvas component trees: remove the ComponentTreeConfigEntityBase
-    // instance check and instead check for the presence of
-    // `type: canvas.component_tree` in the given config entity's config schema.
     if ($value instanceof ComponentTreeConfigEntityBase) {
-      \assert(\array_key_exists('component_tree', $base_data));
-      $base_data['component_tree'] = ComponentTreeConfigEntityBase::asDeterministicallyAndTranslatableKeyedComponentTreeSequence($base_data['component_tree']);
       // Calling ComponentTreeConfigEntityBase::getTranslation() has a static
       // caching side effect. Ensure that callers don't have to deal with the
       // consequences.

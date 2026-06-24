@@ -135,10 +135,8 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
    *   deterministic keys that uniquely identify the component instance using
    *   its instance UUID (to allow symmetrical config translations to target a
    *   given component instance even when that instance is moved).
-   *
-   * @internal
    */
-  public static function asDeterministicallyAndTranslatableKeyedComponentTreeSequence(array $component_tree_sequence): array {
+  private static function asDeterministicallyAndTranslatableKeyedComponentTreeSequence(array $component_tree_sequence): array {
     return \array_combine(
       \array_column($component_tree_sequence, 'uuid'),
       \array_values($component_tree_sequence),
@@ -146,6 +144,14 @@ abstract class ComponentTreeConfigEntityBase extends ConfigEntityBase implements
   }
 
   public function setComponentTree(array $values): static {
+    // TRICKY: a config entity with a translated component tree has sequence
+    // keys: those are essential for config translation. Omitting them would
+    // cause validation to fail.
+    if (\array_is_list($values) && !$this->isNew() && count($this->getTranslationLanguages(include_default: FALSE)) > 0) {
+      // @phpcs:ignore Drupal.Semantics.FunctionTriggerError.TriggerErrorTextLayoutRelaxed
+      @trigger_error(\sprintf("Changing a config entity with an already-translated component tree requires sequence keys, not delta integers. Auto-fixing using the component instance UUIDs."), E_USER_DEPRECATED);
+      $values = self::asDeterministicallyAndTranslatableKeyedComponentTreeSequence($values);
+    }
     $this->set('component_tree', $values);
     return $this;
   }
