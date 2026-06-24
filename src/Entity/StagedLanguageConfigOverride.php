@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Drupal\canvas\Entity;
 
-use Drupal\canvas\ClientSideRepresentation;
 use Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideAccessControlHandler;
 use Drupal\canvas\EntityHandlers\StagedLanguageConfigOverrideStorage;
 use Drupal\Component\Utility\NestedArray;
@@ -56,7 +55,7 @@ use Drupal\language\Config\LanguageConfigOverride;
     ],
   ],
 )]
-final class StagedLanguageConfigOverride extends ConfigEntityBase implements CanvasHttpApiEligibleConfigEntityInterface, AutoSavePublishAwareInterface {
+final class StagedLanguageConfigOverride extends ConfigEntityBase implements AutoSavePublishAwareInterface {
 
   public const string ENTITY_TYPE_ID = 'staged_language_config_override';
 
@@ -207,35 +206,6 @@ final class StagedLanguageConfigOverride extends ConfigEntityBase implements Can
   public function getCacheTagsToInvalidate(): array {
     // @see \Drupal\canvas\Entity\StagedConfigUpdate::getCacheTagsToInvalidate()
     return ["config:$this->config_name"];
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function normalizeForClientSide(): ClientSideRepresentation {
-    return ClientSideRepresentation::create(
-      values: [
-        'id' => $this->id,
-        'langcode' => $this->langcode,
-        'config_name' => $this->config_name,
-        'data' => $this->data,
-      ],
-      preview: NULL
-    );
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public static function createFromClientSide(array $data): static {
-    throw new \LogicException('Not supported: read-only for the client side, mutable only on the server side.');
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function updateFromClientSide(array $data): void {
-    throw new \LogicException('Not supported: read-only for the client side, mutable only on the server side.');
   }
 
   /**
