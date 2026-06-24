@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\canvas\Kernel\ComponentSource;
 
+// cspell:ignore Hola mundo opcional
+
 use Drupal\canvas\ComponentSource\ComponentSourceManager;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ComponentTreeConfigEntityBase;
