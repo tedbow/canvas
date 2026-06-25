@@ -196,7 +196,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
    * @param \Drupal\Core\Cache\CacheableMetadata|null $cache
    *   Optional metadata collector; receives entity and access dependencies.
    *
-   * @return array<string, array>
+   * @return array<string, AutoSaveEntry>
    *   Auto-save entries keyed by auto-save key, filtered to what GET exposes.
    */
   private function getPublishableAutoSaves(bool $with_conflicts, ?CacheableMetadata $cache = NULL): array {
@@ -274,7 +274,6 @@ final class ApiAutoSaveController extends ApiControllerBase {
     );
 
     $body['data'] = \array_map(fn(array $item) => [
-      // @phpstan-ignore-next-line
       'owner' => \array_key_exists($item['owner'], $users) ? [
         'name' => $users[$item['owner']]->getDisplayName(),
         'avatar' => $this->buildAvatarUrl($users[$item['owner']]),
