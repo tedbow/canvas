@@ -18,6 +18,7 @@ use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\Core\Field\BaseFieldDefinition;
 use Drupal\Core\Field\Entity\BaseFieldOverride;
 use Drupal\Core\Url;
+use Drupal\language\ConfigurableLanguageManagerInterface;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
@@ -528,6 +529,7 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
 
     // 3. Create a Spanish LanguageConfigOverride for the PageRegion.
     $language_manager = $this->container->get('language_manager');
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
     $override = $language_manager->getLanguageConfigOverride('es', $region->getConfigDependencyName());
     $override->set('component_tree', [
       self::REGION_COMPONENT_UUID => [
@@ -641,6 +643,7 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
 
     // 4. Create a Spanish LanguageConfigOverride for the ContentTemplate.
     $language_manager = $this->container->get('language_manager');
+    \assert($language_manager instanceof ConfigurableLanguageManagerInterface);
     $override = $language_manager->getLanguageConfigOverride('es', $template->getConfigDependencyName());
     $override->set('component_tree', [
       self::REGION_COMPONENT_UUID => [
