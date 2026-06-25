@@ -658,12 +658,19 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
    * must not be published as-is: it must also get its component instances
    * updated, without losing the Content Creator's data.
    *
+   * @param string $preview_langcode
+   * @param 'translate-before-auto-save'|'translate-after-auto-save' $scenario
+   *
    * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::post()
    * @todo Expand this to test with a user-created non-default language auto-save when asymmetrical translation support is added in https://git.drupalcode.org/project/canvas/-/work_items/3571130
    */
-  #[TestWith(['en'])]
-  #[TestWith(['es'])]
-  public function testPreviewTriggersInstanceUpdateWrittenToAutoSaveForAllTranslations(string $preview_langcode): void {
+  #[TestWith(['en', 'translate-before-auto-save'])]
+  #[TestWith(['es', 'translate-before-auto-save'])]
+  #[TestWith(['en', 'translate-after-auto-save'])]
+  #[TestWith(['es', 'translate-after-auto-save'])]
+  public function testPreviewTriggersInstanceUpdateWrittenToAutoSaveForAllTranslations(string $preview_langcode, string $scenario): void {
+    \assert(\in_array($scenario, ['translate-before-auto-save', 'translate-after-auto-save'], TRUE));
+
     $get_version_and_inputs = fn (?ComponentTreeItem $instance) => [
       'version' => $instance?->getComponentVersion(),
       'inputs' => $instance?->getInputs(),
@@ -679,6 +686,12 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     // Record the essential aspects of the "before" state.
     $actual['en']['before'] = $get_version_and_inputs($page->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID));
     $actual['es']['before'] = $get_version_and_inputs($page->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID));
+
+    if ($scenario === 'translate-after-auto-save') {
+      $page->removeTranslation('es');
+      $page->save();
+      self::assertSame(['en'], \array_keys($page->getTranslationLanguages(TRUE)));
+    }
 
     $auto_save_manager = $this->container->get(AutoSaveManager::class);
     \assert($auto_save_manager instanceof AutoSaveManager);
@@ -716,6 +729,21 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
         $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE),
       ),
     );
+
+    if ($scenario === 'translate-after-auto-save') {
+      $translation = $page->addTranslation('es');
+      $translation->set('title', 'Página de prueba');
+      $translation->set('components', $page->get('components')->getValue());
+      $es_tree = $translation->getComponentTree();
+      $es_item = $es_tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+      self::assertNotNull($es_item);
+      $es_item->setInput(self::ES_TRANSLATION_INPUTS);
+      $translation->save();
+      \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
+      $page = Page::load($page_id);
+      \assert($page instanceof Page);
+      self::assertSame(['en', 'es'], \array_keys($page->getTranslationLanguages(TRUE)));
+    }
 
     // The component evolves: optional_text removed, voice added → new version.
     $this->removeAndAddProp();
