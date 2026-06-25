@@ -196,6 +196,16 @@ final class ApiLayoutController {
       if ($wasModified) {
         $entity = $items->getParent()?->getValue();
         \assert($entity instanceof ComponentTreeEntityInterface || $entity instanceof FieldableEntityInterface);
+        // Capture reconciled staged overrides BEFORE setComponentTree() calls
+        // set(), which clears the $stagedOverrides cache. If captured after,
+        // getTranslation() would re-create from the live LanguageConfigOverride
+        // (still containing removed props), discarding the reconciliation.
+        $configTranslationsToSave = $entity instanceof ComponentTreeConfigEntityBase
+          ? \array_values(\array_map(
+            fn($language) => $entity->getTranslation($language->getId()),
+            $entity->getTranslationLanguages(include_default: FALSE),
+          ))
+          : [];
         if ($entity instanceof ComponentTreeEntityInterface) {
           // @todo https://www.drupal.org/i/3498525 should generalize this to all eligible content entity types (aka FieldableEntityInterface)
           $entity->setComponentTree($items->getValue());
@@ -211,10 +221,13 @@ final class ApiLayoutController {
           // For config entities, $entity is always the default translation.
           : $entity
         );
-        if ($entity instanceof ComponentTreeConfigEntityBase || $entity instanceof ContentEntityInterface) {
+        if ($entity instanceof ContentEntityInterface) {
           foreach ($entity->getTranslationLanguages(include_default: FALSE) as $language) {
             $this->autoSaveManager->saveEntity($entity->getTranslation($language->getId()));
           }
+        }
+        foreach ($configTranslationsToSave as $stagedOverride) {
+          $this->autoSaveManager->saveEntity($stagedOverride);
         }
       }
 
