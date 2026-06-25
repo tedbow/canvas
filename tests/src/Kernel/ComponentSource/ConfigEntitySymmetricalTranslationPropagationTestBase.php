@@ -314,6 +314,49 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
   }
 
   /**
+   * Tests deleting the entity discards its base and staged-override drafts.
+   *
+   * A config entity's base draft and its per-language
+   * StagedLanguageConfigOverride drafts are separate auto-save entries. Deleting
+   * the entity must discard the whole group via hook_entity_delete, so no
+   * orphaned override draft is left behind.
+   *
+   * @legacy-covers \Drupal\canvas\Hook\AutoSaveHooks::entityDelete()
+   * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
+   */
+  public function testEntityDeleteDiscardsStagedOverrides(): void {
+    \assert($this->entity instanceof ComponentTreeConfigEntityBase);
+    $this->createComponentTreeTranslation('es', self::ES_TRANSLATION_INPUTS);
+    self::assertEntityIsValid($this->entity);
+
+    $auto_save_manager = $this->container->get(AutoSaveManager::class);
+    \assert($auto_save_manager instanceof AutoSaveManager);
+    $manager = $this->container->get(ComponentSourceManager::class);
+    \assert($manager instanceof ComponentSourceManager);
+
+    // Mutate a prop so reconciliation produces an actual override draft to stage.
+    $this->removeOptionalProp();
+
+    // Stage the override draft BEFORE setComponentTree() — the latter clears
+    // stagedOverrides — then stage the base draft.
+    $tree = $this->entity->getComponentTree();
+    $manager->updateComponentInstances($tree);
+    $staged = $this->entity->getTranslation('es');
+    self::assertTrue($staged->isNew());
+    $staged->save();
+    $this->entity->setComponentTree($tree->getValue());
+    $auto_save_manager->saveEntity($this->entity);
+
+    // The base draft and its override draft form one pending-changes set.
+    self::assertCount(2, $auto_save_manager->getTranslationGroupAutoSaves($this->entity));
+
+    // Deleting the entity must cascade and discard both drafts together.
+    $this->entity->delete();
+    self::assertSame([], $auto_save_manager->getTranslationGroupAutoSaves($this->entity));
+    self::assertSame([], $auto_save_manager->getAllAutoSaveList(FALSE, FALSE));
+  }
+
+  /**
    * Tests a pending translation draft is reconciled at a bump, then published.
    *
    * A translator drafts an edited override (an unpublished `required_text`),
