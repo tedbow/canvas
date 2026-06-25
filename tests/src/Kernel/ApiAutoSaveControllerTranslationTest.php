@@ -566,10 +566,6 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
     self::assertFalse($staged_es->isEmpty(), 'The ES staged override must not be empty after updateComponentInstances().');
 
     // 7. Publish only the PageRegion auto-save via the auto-save API.
-    // @todo This is expected to fail (422) until the bug is fixed:
-    //   the auto-save data for the ES override still contains text_two because
-    //   the reconciliation of the stale override does not run before publish.
-    //   See https://www.drupal.org/i/3591596.
     $response = $this->makePublishAllRequest([$region_key => \array_diff_key($all_auto_saves[$region_key], \array_flip(AutoSaveManager::AUTO_SAVE_INTERNAL_PROPERTIES))]);
     self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
 
@@ -678,10 +674,6 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
     self::assertFalse($staged_es->isEmpty(), 'The ES staged override must not be empty after updateComponentInstances().');
 
     // 8. Publish only the ContentTemplate auto-save via the auto-save API.
-    // @todo This is expected to fail (422) until the bug is fixed:
-    //   the auto-save data for the ES override still contains text_two because
-    //   the reconciliation of the stale override does not run before publish.
-    //   See https://www.drupal.org/i/3591596.
     $response = $this->makePublishAllRequest([$template_key => \array_diff_key($all_auto_saves[$template_key], \array_flip(AutoSaveManager::AUTO_SAVE_INTERNAL_PROPERTIES))]);
     self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
 
