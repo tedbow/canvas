@@ -535,7 +535,7 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
       self::REGION_COMPONENT_UUID => [
         'inputs' => [
           'text_one' => 'Hola',
-          'text_two' => 'Mundo',
+          'text_two' => 'Hola 2',
         ],
       ],
     ])->save();
@@ -645,7 +645,7 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
       self::REGION_COMPONENT_UUID => [
         'inputs' => [
           'text_one' => 'Hola',
-          'text_two' => 'Mundo',
+          'text_two' => 'Hola 2',
         ],
       ],
     ])->save();
