@@ -47,6 +47,8 @@ use Symfony\Component\Validator\ConstraintViolationListInterface;
 
 /**
  * Handles retrieval and publication of auto-saved changes.
+ *
+ * @phpstan-import-type AutoSaveEntry from AutoSaveManager
  */
 final class ApiAutoSaveController extends ApiControllerBase {
 
@@ -141,6 +143,42 @@ final class ApiAutoSaveController extends ApiControllerBase {
     }
 
     return NULL;
+  }
+
+  /**
+   * Adds the sibling translation auto-saves of every selected content entity.
+   *
+   * Symmetric translation writes the shared component-tree columns for every
+   * translation at once, so the translations of one content entity form a
+   * single atomic publish unit. Given the entries the client selected, this
+   * pulls in every other pending translation auto-save of the same entity so
+   * they are validated, access-checked, applied, and consumed together.
+   *
+   * @param array<string, AutoSaveEntry> $selected
+   *   The auto-save entries the client selected to publish, with 'entity'.
+   * @param array<string, AutoSaveEntry> $all
+   *   Every pending auto-save entry, with 'entity'.
+   *
+   * @return array<string, AutoSaveEntry>
+   *   $selected plus any sibling translation entries of its content entities.
+   */
+  private static function includeSiblingTranslationAutoSaves(array $selected, array $all): array {
+    $expanded = $selected;
+    foreach ($selected as $entry) {
+      $entity = $entry['entity'] ?? NULL;
+      if (!$entity instanceof ContentEntityInterface) {
+        continue;
+      }
+      foreach ($all as $key => $candidate) {
+        $candidate_entity = $candidate['entity'] ?? NULL;
+        if ($candidate_entity instanceof ContentEntityInterface
+          && $candidate_entity->getEntityTypeId() === $entity->getEntityTypeId()
+          && (string) $candidate_entity->id() === (string) $entity->id()) {
+          $expanded[$key] = $candidate;
+        }
+      }
+    }
+    return $expanded;
   }
 
   /**
@@ -261,6 +299,21 @@ final class ApiAutoSaveController extends ApiControllerBase {
     // The client auto-saves do not contain the 'data' key, so we need to use
     // the versions from the auto-save manager.
     $publish_auto_saves = array_intersect_key($all_auto_saves, $client_auto_saves);
+    // The number of logical items the client published, for the response
+    // message. Sibling translations (added below) and config overlay drafts
+    // (filtered from the pending list entirely) are part of one logical item,
+    // so they must not inflate this count.
+    $published_item_count = \count($publish_auto_saves);
+
+    // Symmetric translations share the component-tree columns (the version and
+    // structure), so a content entity's translations cannot be published
+    // independently: publishing one must publish every pending translation of
+    // the same entity, or a sibling would be left at a stale component version.
+    // The non-default translations are also hidden from the client's pending
+    // list, so the client can only ever select the default one.
+    // @see \Drupal\canvas\Controller\ApiAutoSaveController::get()
+    // @see \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
+    $publish_auto_saves = self::includeSiblingTranslationAutoSaves($publish_auto_saves, $all_auto_saves);
 
     // We want to report all access errors at one, so keeping the labels.
     $access_error_labels = [];
@@ -406,7 +459,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
       ], status: 500);
     }
 
-    return new JsonResponse(data: ['message' => new PluralTranslatableMarkup(\count($publish_auto_saves), 'Successfully published 1 item.', 'Successfully published @count items.')], status: 200);
+    return new JsonResponse(data: ['message' => new PluralTranslatableMarkup($published_item_count, 'Successfully published 1 item.', 'Successfully published @count items.')], status: 200);
   }
 
   public function delete(EntityInterface $entity): JsonResponse {

@@ -90,7 +90,13 @@ final class ApiLayoutController {
 
     // Store the original entity for comparison purposes.
     $original_entity = $entity;
-    $autoSaveData = $this->autoSaveManager->getAutoSaveEntity($entity);
+    // For content entities, reconstruct the draft with every pending
+    // translation overlaid: previewing one translation reconciles and re-saves
+    // all of them (symmetric component-tree columns must stay in sync), so a
+    // sibling translation's draft must be present or it would be clobbered.
+    $autoSaveData = $entity instanceof ContentEntityInterface
+      ? $this->autoSaveManager->getAutoSaveEntityForPreview($entity)
+      : $this->autoSaveManager->getAutoSaveEntity($entity);
     if (!$autoSaveData->isEmpty()) {
       $entity = $autoSaveData->entity;
       \assert($entity instanceof ContentEntityInterface || $entity instanceof ContentTemplate);
