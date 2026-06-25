@@ -69,7 +69,15 @@ trait StagedConfigEntityStorageTrait {
   }
 
   public function loadUnchanged($id) {
-    return $this->load($id);
+    // Bypass AutoSaveManager's in-memory entity cache. Unlike load(), which may
+    // return a memoized instance that callers have since mutated (e.g.
+    // reconciliation calling setData()/clearData() on a StagedLanguageConfig-
+    // Override), loadUnchanged() must return the entity as it exists in
+    // persistent storage — matching Drupal core's storage contract.
+    \assert(\is_string($id));
+    $stub = $this->createStub($id);
+    $auto_save_entity = $this->autoSaveManager->getAutoSaveEntity($stub, bypass_cache: TRUE);
+    return $auto_save_entity->entity;
   }
 
   public function loadByProperties(array $values = []): array {

@@ -392,12 +392,14 @@ class AutoSaveManager implements EventSubscriberInterface {
     return self::generateHash(self::normalizeEntity($original));
   }
 
-  public function getAutoSaveEntity(EntityInterface $entity): AutoSaveEntity {
+  public function getAutoSaveEntity(EntityInterface $entity, bool $bypass_cache = FALSE): AutoSaveEntity {
     $key = $this->getAutoSaveKey($entity);
-    $cached = $this->cache->get($key);
-    if ($cached) {
-      \assert($cached->data instanceof AutoSaveEntity);
-      return $cached->data;
+    if (!$bypass_cache) {
+      $cached = $this->cache->get($key);
+      if ($cached) {
+        \assert($cached->data instanceof AutoSaveEntity);
+        return $cached->data;
+      }
     }
     $auto_save_data = $this->autoSaveStore->get($key);
     if (\is_null($auto_save_data)) {
