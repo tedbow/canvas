@@ -323,6 +323,8 @@ abstract class ConfigEntitySymmetricalTranslationPropagationTestBase extends Tra
    *
    * @legacy-covers \Drupal\canvas\Hook\AutoSaveHooks::entityDelete()
    * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
+   *
+   * @see \Drupal\Tests\canvas\Kernel\AutoSaveManagerTest::testPageAutoSaveTranslationBehavior()
    */
   public function testEntityDeleteDiscardsStagedOverrides(): void {
     \assert($this->entity instanceof ComponentTreeConfigEntityBase);

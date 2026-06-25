@@ -346,6 +346,7 @@ class AutoSaveManagerTest extends CanvasKernelTestBase {
     // translation's auto-save, not just the default translation's, so no
     // orphaned sibling draft is left behind.
     // @see \Drupal\canvas\Hook\AutoSaveHooks::entityDelete()
+    // @see \Drupal\Tests\canvas\Kernel\ComponentSource\ConfigEntitySymmetricalTranslationPropagationTestBase::testEntityDeleteDiscardsStagedOverrides()
     $page_en->set('title', 'Modified English title again');
     $auto_save_manager->saveEntity($page_en);
     $page_fr->set('title', 'Titre français à nouveau');
