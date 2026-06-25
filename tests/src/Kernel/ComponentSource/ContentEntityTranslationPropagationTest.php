@@ -17,6 +17,7 @@ use Drupal\language\Entity\ConfigurableLanguage;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\Attributes\TestWith;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -657,7 +658,9 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
    *
    * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::post()
    */
-  public function testPublishReconcilesStaleTranslationAutoSave(): void {
+  #[TestWith(['en'])]
+  #[TestWith(['es'])]
+  public function testPublishReconcilesStaleTranslationAutoSave(string $preview_langcode): void {
     $this->config('system.theme')->set('default', 'stark')->save();
     $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, AutoSaveManager::PUBLISH_PERMISSION]);
 
@@ -668,8 +671,15 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $auto_save_manager = $this->container->get(AutoSaveManager::class);
     \assert($auto_save_manager instanceof AutoSaveManager);
 
+    $get_component_instance_inputs = fn (array $auto_save_entry) => [
+      'component_version' => $auto_save_entry['data']['components'][0]['component_version'],
+      'inputs' => \json_decode($auto_save_entry['data']['components'][0]['inputs'], TRUE, flags: \JSON_THROW_ON_ERROR),
+    ];
+
     // The editor drafts the ES translation at the original version, creating an
     // ES auto-save before the component evolves.
+    // TRICKY: This is artificial! ⚠️ The Canvas UI does not allow crafting a
+    // Spanish translation auto-save.
     $es_page = $page->getTranslation('es');
     $es_tree = $es_page->getComponentTree();
     $es_item = $es_tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
@@ -680,42 +690,60 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     ]);
     $es_page->setComponentTree($es_tree->getValue());
     $auto_save_manager->saveEntity($es_page);
-    self::assertFalse($auto_save_manager->getAutoSaveEntity($es_page)->isEmpty());
+    self::assertSame(
+      [
+        'canvas_page:1:es' => [
+          'component_version' => '54375825cec9d255',
+          'inputs' => [
+            'required_text' => 'Hola mundo EDITADO',
+            'optional_text' => 'Opcional EDITADO',
+          ],
+        ],
+      ],
+      \array_map(
+        $get_component_instance_inputs,
+        $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE),
+      ),
+    );
 
     // The component evolves: optional_text removed, voice added → new version.
     $this->removeAndAddProp();
 
-    // Build the default (EN) auto-save at the new version WITHOUT touching the
-    // ES auto-save. Previewing any translation now reconciles and persists
-    // *every* translation's auto-save (see ::previewTranslation()), which would
-    // bump the stale ES auto-save just created — the opposite of what this test
-    // needs. So run the updater on a freshly loaded default translation and save
-    // only it; the ES auto-save entry is left untouched, i.e. stale. This also
-    // models the real path to a stale per-translation auto-save: a direct write
-    // (e.g. via TMGMT) that never goes through Canvas' preview.
-    \Drupal::entityTypeManager()->getStorage(Component::ENTITY_TYPE_ID)->resetCache();
-    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
-    $default_page = Page::load($page_id);
-    \assert($default_page instanceof Page);
-    $manager = $this->container->get(ComponentSourceManager::class);
-    \assert($manager instanceof ComponentSourceManager);
-    self::assertTrue($manager->updateComponentInstances($default_page->getComponentTree()));
-    $auto_save_manager->saveEntity($default_page);
+    // Even though only a single language (es or en) is previewed, an auto-save
+    // for the default translation is created (en) and both auto-saves are
+    // updated to use the new component version: because symmetrical
+    // translations require them to remain in sync.
+    self::previewTranslation($page_id, $preview_langcode);
 
-    // Sanity: the stored ES auto-save is still at the original version, carrying
-    // the now-deleted optional_text.
-    \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
-    $page = Page::load($page_id);
-    \assert($page instanceof Page);
-    $stale = $auto_save_manager->getAutoSaveEntity($page->getTranslation('es'));
-    self::assertFalse($stale->isEmpty());
-    \assert($stale->entity instanceof Page);
-    $stale_item = $stale->entity->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID);
-    self::assertNotNull($stale_item);
-    self::assertSame($this->originalVersion, $stale_item->getComponentVersion(), 'The ES auto-save remains at the original version before publishing.');
-    self::assertArrayHasKey('optional_text', $stale_item->getInputs() ?? []);
+    $auto_save_manager = $this->container->get(AutoSaveManager::class);
+    \assert($auto_save_manager instanceof AutoSaveManager);
+    // Both EN and ES auto-saves exist after previewing.
+    self::assertSame(
+      [
+        'canvas_page:1:en' => [
+          'component_version' => '18f3189c80b3e594',
+          'inputs' => [
+            'required_text' => 'Hello world',
+            'features' => ['Alpha', 'Beta', 'Gamma', 'Delta'],
+          ],
+        ],
+        'canvas_page:1:es' => [
+          'component_version' => '18f3189c80b3e594',
+          'inputs' => [
+            'required_text' => 'Hola mundo EDITADO',
+            'features' => ['Alpha', 'Beta', 'Gamma', 'Delta'],
+          ],
+        ],
+      ],
+      \array_map(
+        $get_component_instance_inputs,
+        $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE),
+      ),
+    );
 
     // Publish both translations together.
+    // @todo This makes no sense: the UI would not even *show* the non-default
+    // translation to be selected for publishing!
     $all_auto_saves = $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE);
     self::assertCount(2, $all_auto_saves);
     $client_payload = [];
