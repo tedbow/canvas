@@ -8,6 +8,7 @@ namespace Drupal\Tests\canvas\Kernel;
 
 use Drupal\canvas\AutoSave\AutoSaveManager;
 use Drupal\canvas\Controller\ApiAutoSaveController;
+use Drupal\canvas\Controller\ErrorCodesEnum;
 use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\Entity\JavaScriptComponent;
@@ -371,30 +372,29 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
     $pending = $this->getAutoSaveStatesFromServer();
     self::assertArrayNotHasKey($page_key, $pending, 'Non-default-translation auto-saves must be hidden from the pending-changes list.');
 
-    // The endpoint exposes only default-translation entries, but the auto-save manager
-    // verifies that the auto-save entries for other languages actually exist.
-    // @todo This can be exposed again once https://git.drupalcode.org/project/canvas/-/work_items/3591703 is fixed and
-    //   if asymmetrical translations are supported in https://git.drupalcode.org/project/canvas/-/work_items/3571130.
+    // The auto-save entry is still stored internally.
     $all_auto_saves = $autoSave->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE);
     self::assertArrayHasKey($page_key, $all_auto_saves, 'The auto-save entry must be stored for the Spanish translation.');
+
+    // POST must reject the non-default-translation key with 409
+    // UnexpectedItemInPublishRequest, because GET never exposes it to the
+    // client — there is nothing to publish from the client's perspective.
+    // @todo This should be publishable once https://git.drupalcode.org/project/canvas/-/work_items/3591703 is fixed and
+    //   asymmetrical translations are supported in https://git.drupalcode.org/project/canvas/-/work_items/3571130.
     $response = $this->makePublishAllRequest([
       $page_key => \array_diff_key($all_auto_saves[$page_key], \array_flip(AutoSaveManager::AUTO_SAVE_INTERNAL_PROPERTIES)),
     ]);
-    self::assertEquals(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+    self::assertEquals(Response::HTTP_CONFLICT, $response->getStatusCode(), (string) $response->getContent());
+    $decoded = \json_decode((string) $response->getContent(), TRUE);
+    self::assertCount(1, $decoded['errors']);
+    self::assertSame(ErrorCodesEnum::UnexpectedItemInPublishRequest->value, $decoded['errors'][0]['code']);
+    self::assertSame($page_key, $decoded['errors'][0]['source']['pointer']);
 
-    $published = $page_storage->loadUnchanged($page_id);
-    \assert($published instanceof Page);
-    $model = $tree_is_symmetric ? 'symmetric' : 'asymmetric';
-
-    // The Spanish edit is published, including its URL alias …
-    self::assertSame('Hola A editado (es)', self::getItemInputText($published->getTranslation('es'), self::UUID_A), $model);
-    self::assertSame('Spanish A edited', self::getItem($published->getTranslation('es'), self::UUID_A)->getLabel(), $model);
-    self::assertSame('/spanish-page-edited', $published->getTranslation('es')->get('path')->first()?->getValue()['alias'], $model);
-    // … while the English default translation is left completely untouched.
-    self::assertSame('English title', $published->label(), $model);
-    self::assertSame('Hello A (en)', self::getItemInputText($published, self::UUID_A), $model);
-    self::assertSame('English A', self::getItem($published, self::UUID_A)->getLabel(), $model);
-    self::assertSame('/english-page', $published->get('path')->first()?->getValue()['alias'], $model);
+    // The default-translation content must be untouched (the POST was rejected).
+    $unpublished = $page_storage->loadUnchanged($page_id);
+    \assert($unpublished instanceof Page);
+    self::assertSame('Hello A (en)', self::getItemInputText($unpublished, self::UUID_A), 'English translation must be untouched after rejected publish.');
+    self::assertSame('Hola A (es)', self::getItemInputText($unpublished->getTranslation('es'), self::UUID_A), 'Spanish translation must be untouched after rejected publish.');
   }
 
   /**
