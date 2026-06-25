@@ -26,6 +26,7 @@ use Drupal\Core\Config\Entity\ConfigEntityInterface;
 use Drupal\Core\Config\Entity\ConfigEntityTypeInterface;
 use Drupal\Core\Entity\ContentEntityBase;
 use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Entity\ContentEntityTypeInterface;
 use Drupal\Core\Entity\EntityChangedInterface;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
@@ -421,7 +422,8 @@ class AutoSaveManager implements EventSubscriberInterface {
    * @param AutoSaveEntry $entry
    */
   private function createEntityFromAutoSaveEntry(array $entry): EntityInterface {
-    $entity = $this->entityTypeManager->getStorage($entry['entity_type'])->create($entry['data']);
+    $storage = $this->entityTypeManager->getStorage($entry['entity_type']);
+    $entity = $storage->create($entry['data']);
     // Auto-saves can only exist for entities that have already been saved, so
     // the reconstructed entity is never new.
     $entity->enforceIsNew(FALSE);
@@ -431,14 +433,62 @@ class AutoSaveManager implements EventSubscriberInterface {
     if ($entity instanceof RevisionableInterface) {
       $entity->updateLoadedRevisionId();
     }
-    // @todo Also check \Drupal\content_translation\ContentTranslationManager::isEnabled() for content entities in https://git.drupalcode.org/project/canvas/-/work_items/3571130
-    if ($entity instanceof ContentEntityBase && $entity->isTranslatable()) {
-      // Old entries predate 'is_default_translation' — they can only have been
-      // created from the default translation, so TRUE is the correct fallback.
-      // @todo Remove this fallback in Canvas 2.0.
-      $entity->setDefaultTranslationEnforced($entry['is_default_translation'] ?? TRUE);
+
+    // A content entity's auto-save snapshot only stores the single translation
+    // that was edited, so the entity created from it knows about just that one
+    // translation — and, for a non-default translation, ::create() even treats
+    // it as the default. Overlay the snapshot onto a fresh copy of the stored
+    // entity so the reconstructed entity is aware of every translation that
+    // exists and keeps the real default translation. Config entities have no
+    // content translations, an entity deleted since the auto-save was written
+    // has nothing to overlay onto, and a snapshot for a translation that does
+    // not (yet) exist in storage cannot be merged onto it: all keep the
+    // snapshot-only reconstruction.
+    $stored = $entity instanceof ContentEntityInterface ? $storage->loadUnchanged($entry['entity_id']) : NULL;
+    $langcode = $entity->language()->getId();
+    if (!$stored instanceof ContentEntityInterface || !$stored->hasTranslation($langcode)) {
+      // @todo Also check \Drupal\content_translation\ContentTranslationManager::isEnabled() for content entities in https://git.drupalcode.org/project/canvas/-/work_items/3571130
+      if ($entity instanceof ContentEntityBase && $entity->isTranslatable()) {
+        // Old entries predate 'is_default_translation' — they can only have
+        // been created from the default translation, so TRUE is the correct
+        // fallback.
+        // @todo Remove this fallback in Canvas 2.0.
+        $entity->setDefaultTranslationEnforced($entry['is_default_translation'] ?? TRUE);
+      }
+      return $entity;
     }
-    return $entity;
+
+    $entity_definition = $stored->getEntityType();
+    \assert($entity_definition instanceof ContentEntityTypeInterface);
+    // Entity keys and revision metadata identify the stored entity and must not
+    // be overwritten by the snapshot's copy of them.
+    $skip_keys = \array_filter([
+      $entity_definition->getKey('id'),
+      $entity_definition->getKey('revision'),
+      $entity_definition->getKey('uuid'),
+      $entity_definition->getKey('langcode'),
+      $entity_definition->getRevisionMetadataKey('revision_created'),
+      $entity_definition->getRevisionMetadataKey('revision_user'),
+    ], \is_string(...));
+    $stored_langcodes = \array_keys($stored->getTranslationLanguages());
+    $target = $stored->getTranslation($langcode);
+    foreach ($entity->getFields() as $field_name => $field) {
+      if (\in_array($field_name, $skip_keys, TRUE)) {
+        continue;
+      }
+      $field_definition = $field->getFieldDefinition();
+      // Only stored data matters here, except computed fields that are
+      // persisted on save (e.g. path, moderation_state).
+      // @see self::isPersistedComputedField()
+      if ($field_definition->isComputed() && !self::isPersistedComputedField($field_definition)) {
+        continue;
+      }
+      $target->set($field_name, $field->getValue());
+    }
+    $stored->enforceIsNew(FALSE);
+    // Overlaying the snapshot must not change which translations exist.
+    \assert(\array_keys($target->getTranslationLanguages()) === $stored_langcodes);
+    return $target;
   }
 
   /**
