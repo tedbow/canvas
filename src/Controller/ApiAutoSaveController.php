@@ -273,19 +273,22 @@ final class ApiAutoSaveController extends ApiControllerBase {
       $filtered
     );
 
-    $body['data'] = \array_map(fn(array $item) => [
-      'owner' => \array_key_exists($item['owner'], $users) ? [
-        'name' => $users[$item['owner']]->getDisplayName(),
-        'avatar' => $this->buildAvatarUrl($users[$item['owner']]),
-        'uri' => $users[$item['owner']]->toUrl()->toString(),
-        'id' => $item['owner'],
-      ] : [
-        'name' => new TranslatableMarkup('User @uid', ['@uid' => $item['owner']]),
-        'avatar' => NULL,
-        'uri' => NULL,
-        'id' => $item['owner'],
-      ],
-    ] + $item, $filtered);
+    $body['data'] = \array_map(function (array $item) use ($users): array {
+      \assert(\is_int($item['owner']));
+      return [
+        'owner' => \array_key_exists($item['owner'], $users) ? [
+          'name' => $users[$item['owner']]->getDisplayName(),
+          'avatar' => $this->buildAvatarUrl($users[$item['owner']]),
+          'uri' => $users[$item['owner']]->toUrl()->toString(),
+          'id' => $item['owner'],
+        ] : [
+          'name' => new TranslatableMarkup('User @uid', ['@uid' => $item['owner']]),
+          'avatar' => NULL,
+          'uri' => NULL,
+          'id' => $item['owner'],
+        ],
+      ] + $item;
+    }, $filtered);
 
     return (new CacheableJsonResponse(data: $body, status: $status))->addCacheableDependency($cache->addCacheTags([AutoSaveManager::CACHE_TAG]));
   }
