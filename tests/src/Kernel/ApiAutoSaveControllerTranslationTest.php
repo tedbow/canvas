@@ -13,6 +13,7 @@ use Drupal\canvas\Entity\ContentTemplate;
 use Drupal\canvas\Entity\JavaScriptComponent;
 use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Entity\PageRegion;
+use Drupal\canvas\Plugin\Canvas\ComponentSource\JsComponentDiscovery;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItemList;
 use Drupal\Core\Field\BaseFieldDefinition;
@@ -24,6 +25,7 @@ use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
 use Drupal\Tests\canvas\Kernel\Traits\RequestTrait;
 use Drupal\Tests\canvas\Traits\AutoSaveRequestTestTrait;
+use Drupal\Tests\canvas\Traits\ConstraintViolationsTestTrait;
 use Drupal\Tests\canvas\Traits\GenerateComponentConfigTrait;
 use Drupal\Tests\content_translation\Traits\ContentTranslationTestTrait;
 use Drupal\Tests\user\Traits\UserCreationTrait;
@@ -67,6 +69,7 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
 
   use RequestTrait;
   use AutoSaveRequestTestTrait;
+  use ConstraintViolationsTestTrait;
   use ContentTranslationTestTrait;
   use GenerateComponentConfigTrait;
   use UserCreationTrait;
@@ -494,6 +497,7 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
       'slots' => [],
       'dataDependencies' => [],
     ]);
+    self::assertEntityIsValid($component);
     self::assertSame(SAVED_NEW, $component->save());
 
     $component_version = Component::load('js.test_two_props')?->getActiveVersion();
@@ -515,9 +519,11 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
         ],
       ],
     ]);
+    self::assertEntityIsValid($region);
     $region->save();
     foreach ($regions as $key => $r) {
       if ($key !== 'stark.sidebar_first') {
+        self::assertEntityIsValid($region);
         $r->save();
       }
     }
@@ -525,6 +531,7 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
     // A Page entity is required — PageRegions are only rendered when a canvas
     // page is requested via the layout API.
     $page = Page::create(['title' => 'Test page', 'status' => FALSE, 'owner' => $account->id()]);
+    self::assertEntityIsValid($page);
     $page->save();
 
     // 3. Create a Spanish LanguageConfigOverride for the PageRegion.
@@ -539,10 +546,36 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
         ],
       ],
     ])->save();
+    self::assertEntityIsValid($region);
 
-    // 4. Remove the second prop from the component.
+    // 4. Remove the second prop from the code component. This triggers the
+    // creation of a new component version.
+    $component_config_entity_before = Component::load(JsComponentDiscovery::getComponentConfigEntityId($component->id()));
+    self::assertNotNull($component_config_entity_before);
+    self::assertSame(['9cf0a5f76460e069'], $component_config_entity_before->getVersions());
+    // @phpstan-ignore-next-line method.notFound
+    $prop_definitions_before = $component_config_entity_before->getComponentSource()->getExplicitInputDefinitions()['shapes'];
     $component->set('props', ['text_one' => ['type' => 'string', 'title' => 'Text One']]);
+    self::assertEntityIsValid($component);
     $component->save();
+    $component_config_entity_after = Component::load(JsComponentDiscovery::getComponentConfigEntityId($component->id()));
+    self::assertNotNull($component_config_entity_after);
+    self::assertSame(['fc47b59d52e9c9e0', '9cf0a5f76460e069'], $component_config_entity_after->getVersions());
+    // TRICKY: This should NOT make the PageRegion invalid, because it continues
+    // to point to the same component version (the old one) and the removed prop
+    // is optional. However, because
+    // JsonSchemaPropsComponentInstanceInputsConfigSchemaGenerator must inspect
+    // the actual JSON schema, and SDCs nor code components retain
+    // the JSON schema for deleted/modified props, no JSON schema is available.
+    // @todo This is a regression for default translations of config-defined component trees, caused by ComponentInputsMapping in https://git.drupalcode.org/project/canvas/-/work_items/3582478. Although automatic component instance updating (ComponentInstanceUpdaterInterface) automatically fixes it. Consider fixing this regression by expanding what `type: canvas.json_schema_props`'s `prop_field_definitions` stores: either add `translatable: { type: boolean }`, `json_schema: { type: ignore }`, or something in between (like the prop shape) in <URL>.
+    // @phpstan-ignore-next-line method.notFound
+    $prop_definitions_after = $component_config_entity_after->getComponentSource()->getExplicitInputDefinitions()['shapes'];
+    self::assertSame(['text_one' => ['type' => 'string'], 'text_two' => ['type' => 'string']], $prop_definitions_before);
+    self::assertSame(['text_one' => ['type' => 'string']], $prop_definitions_after);
+    self::assertSame([
+      '' => '[<em class="placeholder">es</em>] [<em class="placeholder">component_tree.' . self::REGION_COMPONENT_UUID . '.inputs.text_two</em>] <em class="placeholder">&#039;text_two&#039; is not a supported key.</em>',
+      'component_tree.' . self::REGION_COMPONENT_UUID . '.inputs.text_two' => "'text_two' is not a supported key.",
+    ], self::violationsToArray($region->getTypedData()->validate()));
 
     // 5. Request the page layout — this triggers addGlobalRegions() →
     // buildRegion() → updateComponentInstances() → autoSaveManager->saveEntity()
@@ -561,9 +594,25 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
     self::assertArrayHasKey($region_key, $all_auto_saves, 'PageRegion must have an auto-save after the layout GET removed a prop.');
 
     // The ES staged override is embedded in the PageRegion auto-save group,
-    // not as a separate entry in getAllAutoSaveList(). Verify it was staged.
+    // not as a separate entry in getAllAutoSaveList(). Verify it was staged and
+    // what exactly was staged.
     $staged_es = $region->getTranslation('es');
     self::assertFalse($staged_es->isEmpty(), 'The ES staged override must not be empty after updateComponentInstances().');
+    self::assertSame([
+      'component_tree' => [
+        self::REGION_COMPONENT_UUID => [
+          'inputs' => [
+            'text_one' => 'Hola',
+          ],
+        ],
+      ],
+    ], $staged_es->getData());
+    // @todo Remove this assertion in favor of the commented out assertion once <URL> is fixed.
+    // self::assertEntityIsValid($region);
+    self::assertSame([
+      '' => '[<em class="placeholder">es</em>] [<em class="placeholder">component_tree.' . self::REGION_COMPONENT_UUID . '.inputs.text_two</em>] <em class="placeholder">&#039;text_two&#039; is not a supported key.</em>',
+      'component_tree.' . self::REGION_COMPONENT_UUID . '.inputs.text_two' => "'text_two' is not a supported key.",
+    ], self::violationsToArray($region->getTypedData()->validate()));
 
     // 7. Publish only the PageRegion auto-save via the auto-save API.
     $response = $this->makePublishAllRequest([$region_key => \array_diff_key($all_auto_saves[$region_key], \array_flip(AutoSaveManager::AUTO_SAVE_INTERNAL_PROPERTIES))]);
@@ -575,6 +624,9 @@ final class ApiAutoSaveControllerTranslationTest extends CanvasKernelTestBase {
     self::assertIsArray($inputs);
     self::assertSame('Hola', $inputs['text_one'], 'The translated value for text_one must be preserved.');
     self::assertArrayNotHasKey('text_two', $inputs, 'The removed prop text_two must not appear in the published ES override.');
+    $reloaded = PageRegion::load($region->id());
+    self::assertNotNull($reloaded);
+    self::assertEntityIsValid($reloaded);
   }
 
   /**
