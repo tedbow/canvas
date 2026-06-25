@@ -444,7 +444,12 @@ class AutoSaveManager implements EventSubscriberInterface {
     // has nothing to overlay onto, and a snapshot for a translation that does
     // not (yet) exist in storage cannot be merged onto it: all keep the
     // snapshot-only reconstruction.
-    $stored = $entity instanceof ContentEntityInterface ? $storage->loadUnchanged($entry['entity_id']) : NULL;
+    // Clone the loaded entity before overlaying: loadUnchanged() repopulates
+    // the static cache, so mutating its return value (via $target below) would
+    // leak the snapshot's values into the stored entity that later loads —
+    // including loadMultiple() — hand back.
+    $loaded = $entity instanceof ContentEntityInterface ? $storage->loadUnchanged($entry['entity_id']) : NULL;
+    $stored = $loaded instanceof ContentEntityInterface ? clone $loaded : NULL;
     $langcode = $entity->language()->getId();
     if (!$stored instanceof ContentEntityInterface || !$stored->hasTranslation($langcode)) {
       // @todo Also check \Drupal\content_translation\ContentTranslationManager::isEnabled() for content entities in https://git.drupalcode.org/project/canvas/-/work_items/3571130
