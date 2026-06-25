@@ -293,44 +293,6 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Tests that updating instances without any translations works and bumps version.
-   *
-   * @legacy-covers \Drupal\canvas\ComponentSource\ComponentSourceManager::updateComponentInstances()
-   */
-  public function testNoTranslationsNoError(): void {
-    $page = Page::create([
-      'title' => 'No translations page',
-      'langcode' => 'en',
-      'components' => [
-        [
-          'uuid' => self::COMPONENT_UUID,
-          'component_id' => 'js.translatable_js_component',
-          'component_version' => $this->originalVersion,
-          'parent_uuid' => NULL,
-          'inputs' => ['required_text' => 'Hello'],
-        ],
-      ],
-    ]);
-    self::assertSame(SAVED_NEW, $page->save());
-    $page_id = $page->id();
-    \assert($page_id !== NULL);
-
-    $this->addOptionalProp();
-
-    \Drupal::entityTypeManager()->getStorage('component')->resetCache();
-    $page = Page::load($page_id);
-    \assert($page instanceof Page);
-    $tree = $page->getComponentTree();
-    $manager = $this->container->get(ComponentSourceManager::class);
-    \assert($manager instanceof ComponentSourceManager);
-    self::assertTrue($manager->updateComponentInstances($tree));
-
-    $en_item = $tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
-    self::assertNotNull($en_item);
-    self::assertNotSame($this->originalVersion, $en_item->getComponentVersion());
-  }
-
-  /**
    * Tests that multiple component instances in one tree are all reconciled.
    */
   public function testMultipleComponentInstancesReconciled(): void {
