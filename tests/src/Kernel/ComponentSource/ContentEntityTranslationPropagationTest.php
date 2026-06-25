@@ -14,6 +14,7 @@ use Drupal\canvas\Entity\Component;
 use Drupal\canvas\Entity\Page;
 use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\language\Entity\ConfigurableLanguage;
+use Drupal\Tests\canvas\Kernel\Traits\RequestTrait;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
@@ -36,6 +37,8 @@ use Symfony\Component\HttpFoundation\Response;
 #[Group('canvas_translation')]
 #[Group('slow')]
 final class ContentEntityTranslationPropagationTest extends TranslationPropagationTestBase {
+
+  use RequestTrait;
 
   /**
    * {@inheritdoc}
@@ -647,26 +650,35 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Publishing reconciles a translation auto-save left at an older version.
+   * Tests all translations are updated, and an existing auto-save is respected.
    *
-   * A translation can carry an auto-save taken at the old component version:
-   * the editor drafted it, then the component evolved and only another
-   * translation was re-previewed. That stale snapshot must not be published
-   * as-is. Publishing reconciles it to the active version — preserving the
-   * editor's translated value, pruning deleted props, and bumping the version —
-   * so no translation is ever published outdated.
+   * A translation can carry an auto-save created at the old component version:
+   * the Content Creator drafted it, then the component evolved and either the
+   * default translation was previewed, or a translation's. That stale auto-save
+   * must not be published as-is: it must also get its component instances
+   * updated, without losing the Content Creator's data.
    *
    * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::post()
+   * @todo Expand this to test with a user-created non-default language auto-save when asymmetrical translation support is added in https://git.drupalcode.org/project/canvas/-/work_items/3571130
    */
   #[TestWith(['en'])]
   #[TestWith(['es'])]
-  public function testPublishReconcilesStaleTranslationAutoSave(string $preview_langcode): void {
+  public function testPreviewTriggersInstanceUpdateWrittenToAutoSaveForAllTranslations(string $preview_langcode): void {
+    $get_version_and_inputs = fn (?ComponentTreeItem $instance) => [
+      'version' => $instance?->getComponentVersion(),
+      'inputs' => $instance?->getInputs(),
+    ];
+
     $this->config('system.theme')->set('default', 'stark')->save();
     $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, AutoSaveManager::PUBLISH_PERMISSION]);
 
     $page = $this->createPageWithTranslation();
     $page_id = $page->id();
     \assert($page_id !== NULL);
+
+    // Record the essential aspects of the "before" state.
+    $actual['en']['before'] = $get_version_and_inputs($page->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID));
+    $actual['es']['before'] = $get_version_and_inputs($page->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID));
 
     $auto_save_manager = $this->container->get(AutoSaveManager::class);
     \assert($auto_save_manager instanceof AutoSaveManager);
@@ -676,27 +688,26 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
       'inputs' => \json_decode($auto_save_entry['data']['components'][0]['inputs'], TRUE, flags: \JSON_THROW_ON_ERROR),
     ];
 
-    // The editor drafts the ES translation at the original version, creating an
-    // ES auto-save before the component evolves.
-    // TRICKY: This is artificial! ⚠️ The Canvas UI does not allow crafting a
-    // Spanish translation auto-save.
-    $es_page = $page->getTranslation('es');
-    $es_tree = $es_page->getComponentTree();
-    $es_item = $es_tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
-    \assert($es_item !== NULL);
-    $es_item->setInput([
-      'required_text' => 'Hola mundo EDITADO',
-      'optional_text' => 'Opcional EDITADO',
+    // The Content Creator drafts a change to the default translation, creating
+    // an EN auto-save before the code component evolves. Deletes the value for
+    // the (untranslatable) `features` prop, changes the strings for the two
+    // others.
+    $tree = $page->getComponentTree();
+    $item = $tree->getComponentTreeItemByUuid(self::COMPONENT_UUID);
+    self::assertNotNull($item);
+    $item->setInput([
+      'required_text' => 'YO',
+      'optional_text' => 'HO',
     ]);
-    $es_page->setComponentTree($es_tree->getValue());
-    $auto_save_manager->saveEntity($es_page);
+    $page->setComponentTree($tree->getValue());
+    $auto_save_manager->saveEntity($page);
     self::assertSame(
       [
-        'canvas_page:1:es' => [
-          'component_version' => '54375825cec9d255',
+        'canvas_page:1:en' => [
+          'component_version' => $this->originalVersion,
           'inputs' => [
-            'required_text' => 'Hola mundo EDITADO',
-            'optional_text' => 'Opcional EDITADO',
+            'required_text' => 'YO',
+            'optional_text' => 'HO',
           ],
         ],
       ],
@@ -708,30 +719,41 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
 
     // The component evolves: optional_text removed, voice added → new version.
     $this->removeAndAddProp();
+    $versions = Component::load('js.translatable_js_component')?->getVersions() ?? [];
+    self::assertCount(2, $versions);
+    [$active_version, $old_version] = $versions;
+    self::assertSame($this->originalVersion, $old_version);
 
-    // Even though only a single language (es or en) is previewed, an auto-save
-    // for the default translation is created (en) and both auto-saves are
+    // Even though only a single language (ES or EN) is previewed, an auto-save
+    // for the default translation is created (EN) and both auto-saves are
     // updated to use the new component version: because symmetrical
     // translations require them to remain in sync.
+    // This also models the real path to a stale per-translation auto-save: a
+    // direct write (e.g. via TMGMT) that never goes through Canvas' preview.
     self::previewTranslation($page_id, $preview_langcode);
-
     $auto_save_manager = $this->container->get(AutoSaveManager::class);
     \assert($auto_save_manager instanceof AutoSaveManager);
     // Both EN and ES auto-saves exist after previewing.
     self::assertSame(
       [
         'canvas_page:1:en' => [
-          'component_version' => '18f3189c80b3e594',
+          'component_version' => $active_version,
           'inputs' => [
-            'required_text' => 'Hello world',
-            'features' => ['Alpha', 'Beta', 'Gamma', 'Delta'],
+            'required_text' => 'YO',
           ],
         ],
         'canvas_page:1:es' => [
-          'component_version' => '18f3189c80b3e594',
+          'component_version' => $active_version,
           'inputs' => [
-            'required_text' => 'Hola mundo EDITADO',
-            'features' => ['Alpha', 'Beta', 'Gamma', 'Delta'],
+            'required_text' => 'Hola mundo',
+            // ⚠️ Note how `features` did NOT disappear from ES, even though the
+            // Content Creator deleted it from EN. That's because:
+            // - ::removeAndAddProp() did not remove this prop from the schema
+            // - the Content Creator simply chose to not populate this input in
+            //   the default translation (EN).
+            // It is permissible for translations to populate optional inputs
+            // that are not populated in the default translation.
+            'features' => self::ES_TRANSLATION_INPUTS['features'],
           ],
         ],
       ],
@@ -741,35 +763,59 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
       ),
     );
 
-    // Publish both translations together.
-    // @todo This makes no sense: the UI would not even *show* the non-default
-    // translation to be selected for publishing!
-    $all_auto_saves = $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE);
-    self::assertCount(2, $all_auto_saves);
-    $client_payload = [];
-    foreach ($all_auto_saves as $key => $entry) {
-      $client_payload[$key] = ['data_hash' => $entry['data_hash']];
-    }
-    $request = Request::create('/canvas/api/v0/auto-saves/publish', 'POST', content: (string) \json_encode($client_payload));
-    $publish_controller = \Drupal::classResolver(ApiAutoSaveController::class);
-    \assert($publish_controller instanceof ApiAutoSaveController);
-    $response = $publish_controller->post($request);
+    // The Content Creator should see only the default translation.
+    $response = $this->request(Request::create('/canvas/api/v0/auto-saves/pending', 'GET'));
     self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+    $json = \json_decode($response->getContent() ?: '', TRUE, flags: JSON_THROW_ON_ERROR);
+    $pending = \array_map(
+      fn (array $auto_save_entry) => \array_intersect_key($auto_save_entry, \array_flip(['label', 'data_hash'])),
+      $json['data'] ?? [],
+    );
+    $expected_auto_save_key = Page::ENTITY_TYPE_ID . ':1:en';
+    self::assertSame([$expected_auto_save_key], \array_keys($pending));
+    self::assertSame($page->label(), $pending[$expected_auto_save_key]['label']);
 
-    // The published ES translation is reconciled: the editor's translated value
-    // survives, the deleted prop is gone, and the version matches the default.
+    // The Content Creator should be able to publish the default translation,
+    // and this should publish all symmetrical translations, too.
+    $request_body = [
+      $expected_auto_save_key => [
+        'data_hash' => $pending[$expected_auto_save_key]['data_hash'],
+      ],
+    ];
+    $response = $this->request(Request::create('/canvas/api/v0/auto-saves/publish', 'POST',
+      server: ['CONTENT_TYPE' => 'application/json'],
+      content: \json_encode($request_body, flags: \JSON_THROW_ON_ERROR),
+    ));
+    self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
+    $json = json_decode($response->getContent() ?: '', TRUE, flags: JSON_THROW_ON_ERROR);
+    self::assertSame(['message' => "Successfully published 1 item."], $json);
+
+    // Verify the expected translated Page is live, with:
+    // - new revision was created
+    // - both translations have been updated to the new component version
+    // - hence the deleted prop no longer is populated by either translation
+    // - the original EN auto-save is respected: `features` is empty in EN
+    // - the ES translation still populates `features`
     \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
     $published = Page::load($page_id);
-    \assert($published instanceof Page);
-    $es_inputs = self::getInputs($published, 'es', self::COMPONENT_UUID);
-    self::assertNotNull($es_inputs);
-    self::assertSame('Hola mundo EDITADO', $es_inputs['required_text'], 'The translated value is preserved.');
-    self::assertArrayNotHasKey('optional_text', $es_inputs, 'The deleted prop must not be published.');
+    self::assertNotNull($published);
+    self::assertSame((string) 1, $page->getRevisionId());
+    self::assertSame((string) 2, $published->getRevisionId());
+    // Record the essential aspects of the "after"" state.
+    $actual['en']['after'] = $get_version_and_inputs($published->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID));
+    $actual['es']['after'] = $get_version_and_inputs($published->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID));
 
-    $en_version = $published->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID)?->getComponentVersion();
-    $es_version = $published->getTranslation('es')->getComponentTree()->getComponentTreeItemByUuid(self::COMPONENT_UUID)?->getComponentVersion();
-    self::assertNotSame($this->originalVersion, $es_version, 'The ES translation is published at the new version, not the original.');
-    self::assertSame($en_version, $es_version, 'Both translations are published at the same component version.');
+    // Assert the precise before and after, in an optimized-for-reading format.
+    // @phpcs:disable
+    self::assertSame([
+      'before' => ['version' => $old_version,    'inputs' => ['required_text' => 'Hello world', 'optional_text' => 'Optional EN', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']]],
+      'after'  => ['version' => $active_version, 'inputs' => ['required_text' => 'YO',                                                                                             ]],
+    ], $actual['en']);
+    self::assertSame([
+      'before' => ['version' => $old_version,    'inputs' => ['required_text' => 'Hola mundo', 'optional_text' => 'opcional ES', 'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']]],
+      'after'  => ['version' => $active_version, 'inputs' => ['required_text' => 'Hola mundo',                                   'features' => ['Alpha', 'Beta', 'Gamma', 'Delta']]],
+    ], $actual['es']);
+    // @phpcs:enable
   }
 
   /**
