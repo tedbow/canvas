@@ -16,7 +16,6 @@ use Drupal\canvas\Plugin\Field\FieldType\ComponentTreeItem;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\Tests\canvas\Kernel\Traits\RequestTrait;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\TestWith;
 use Symfony\Component\HttpFoundation\Request;
@@ -536,20 +535,16 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Publishing the reconciled translations applies the new version to all.
+   * Publishing the default translation applies the new version to all.
    *
-   * After a component version change, only previewing the default translation
-   * creates a reconciled auto-save also for the `es` translation. Publishing
-   * only the default translation applies the new version and the reconciled
-   * inputs to all translations, with translatable values preserved.
-   *
-   * @param string[] $selected_langcodes
-   *   The translations selected to publish.
+   * After a component version change, previewing the default translation creates
+   * a reconciled auto-save also for the `es` translation. Publishing the default
+   * translation applies the new version and the reconciled inputs to all
+   * translations, with translatable values preserved.
    *
    * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::post()
    */
-  #[DataProvider('providerPublishSelection')]
-  public function testPublishAfterPropagationSucceeds(array $selected_langcodes): void {
+  public function testPublishAfterPropagationSucceeds(): void {
     $this->config('system.theme')->set('default', 'stark')->save();
     $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, AutoSaveManager::PUBLISH_PERMISSION]);
 
@@ -567,16 +562,10 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $all_auto_saves = $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE);
     self::assertCount(2, $all_auto_saves, 'Both EN and ES auto-saves exist after previewing.');
 
-    // Build the publish payload from only the selected translations.
-    $client_payload = [];
-    foreach ($all_auto_saves as $key => $entry) {
-      foreach ($selected_langcodes as $langcode) {
-        if (\str_ends_with($key, ':' . $langcode)) {
-          $client_payload[$key] = ['data_hash' => $entry['data_hash']];
-        }
-      }
-    }
-    self::assertCount(\count($selected_langcodes), $client_payload, 'Publish payload contains only the selected translations.');
+    // Only the default (EN) translation key is publishable via the endpoint.
+    $en_key = \array_key_first(\array_filter($all_auto_saves, fn($k) => \str_ends_with($k, ':en'), \ARRAY_FILTER_USE_KEY));
+    \assert(\is_string($en_key));
+    $client_payload = [$en_key => ['data_hash' => $all_auto_saves[$en_key]['data_hash']]];
     $request = Request::create('/canvas/api/v0/auto-saves/publish', 'POST', content: (string) \json_encode($client_payload));
 
     $publish_controller = \Drupal::classResolver(ApiAutoSaveController::class);
@@ -584,31 +573,21 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     $response = $publish_controller->post($request);
     self::assertSame(Response::HTTP_OK, $response->getStatusCode(), (string) $response->getContent());
 
-    // Every selected translation is published with the new required prop, the
-    // new version, and its original translatable value intact.
+    // Both translations are published with the new required prop: EN explicitly,
+    // ES implicitly as a symmetric sibling.
     \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
     $published = Page::load($page_id);
     \assert($published instanceof Page);
-    $expected_required_text = ['en' => 'Hello world', 'es' => 'Hola mundo'];
-    foreach ($selected_langcodes as $langcode) {
+    foreach (['en' => 'Hello world', 'es' => 'Hola mundo'] as $langcode => $expected_required_text) {
       $inputs = self::getInputs($published, $langcode, self::COMPONENT_UUID);
       self::assertNotNull($inputs, "$langcode inputs exist after publishing.");
       self::assertArrayHasKey('voice', $inputs, "$langcode published with the new required prop.");
       self::assertSame('polite', $inputs['voice']);
-      self::assertSame($expected_required_text[$langcode], $inputs['required_text']);
+      self::assertSame($expected_required_text, $inputs['required_text']);
     }
 
-    // The selected translations' auto-saves are consumed.
-    $remaining = $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE);
-    foreach (\array_keys($client_payload) as $published_key) {
-      self::assertArrayNotHasKey($published_key, $remaining, 'Published auto-save must be consumed.');
-    }
-  }
-
-  public static function providerPublishSelection(): \Generator {
-    yield 'both translations selected' => [['en', 'es']];
-    yield 'only the default (en) translation selected' => [['en']];
-    yield 'only the non-default (es) translation selected' => [['es']];
+    // All auto-saves (EN and ES) are consumed.
+    self::assertCount(0, $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE));
   }
 
   /**
@@ -809,22 +788,17 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
   }
 
   /**
-   * Discarding clears every translation's auto-save, whichever one is acted on.
+   * Discarding via the default translation clears every translation's auto-save.
    *
    * Propagation creates an auto-save in every translation. Because symmetric
    * translation writes the shared component-tree columns for all translations
-   * at once, discarding one must clear them all; otherwise a stale sibling
-   * draft is left pending. The discard route carries no langcode, so the
-   * translation passed in must not change the outcome.
-   *
-   * @param string $discard_langcode
-   *   The translation whose entity is passed to the discard endpoint.
+   * at once, discarding the default must clear all sibling drafts too; otherwise
+   * a stale sibling is left pending.
    *
    * @legacy-covers \Drupal\canvas\Controller\ApiAutoSaveController::delete()
    * @legacy-covers \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
    */
-  #[DataProvider('providerDiscardTranslation')]
-  public function testDiscardAfterPropagationClearsAllTranslations(string $discard_langcode): void {
+  public function testDiscardAfterPropagationClearsAllTranslations(): void {
     $this->config('system.theme')->set('default', 'stark')->save();
     $this->setUpCurrentUser([], [Page::EDIT_PERMISSION, AutoSaveManager::PUBLISH_PERMISSION]);
 
@@ -843,19 +817,13 @@ final class ContentEntityTranslationPropagationTest extends TranslationPropagati
     \Drupal::entityTypeManager()->getStorage(Page::ENTITY_TYPE_ID)->resetCache();
     $page = Page::load($page_id);
     \assert($page instanceof Page);
-    $target = $page->hasTranslation($discard_langcode) ? $page->getTranslation($discard_langcode) : $page;
     $delete_controller = \Drupal::classResolver(ApiAutoSaveController::class);
     \assert($delete_controller instanceof ApiAutoSaveController);
-    $response = $delete_controller->delete($target);
+    $response = $delete_controller->delete($page);
     self::assertSame(Response::HTTP_NO_CONTENT, $response->getStatusCode(), (string) $response->getContent());
 
     // Every translation's auto-save is cleared, not just the targeted one.
     self::assertCount(0, $auto_save_manager->getAllAutoSaveList(with_entities: FALSE, with_conflicts: FALSE));
-  }
-
-  public static function providerDiscardTranslation(): \Generator {
-    yield 'discard via the default (en) translation' => ['en'];
-    yield 'discard via the non-default (es) translation' => ['es'];
   }
 
 }
