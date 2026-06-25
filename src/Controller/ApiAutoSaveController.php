@@ -71,8 +71,8 @@ final class ApiAutoSaveController extends ApiControllerBase {
     private readonly ComponentTreeLoader $componentTreeLoader,
   ) {}
 
-  private static function validateExpectedAutoSaves(array $expected_auto_saves, array $all_auto_saves): ?JsonResponse {
-    $unexpected_keys = \array_diff_key($expected_auto_saves, $all_auto_saves);
+  private static function validateExpectedAutoSaves(array $expected_auto_saves, array $publishable_auto_saves): ?JsonResponse {
+    $unexpected_keys = \array_diff_key($expected_auto_saves, $publishable_auto_saves);
     if ($unexpected_keys) {
       $errors = [];
       foreach (\array_keys($unexpected_keys) as $key) {
@@ -87,8 +87,8 @@ final class ApiAutoSaveController extends ApiControllerBase {
       return new JsonResponse(data: ['errors' => $errors], status: Response::HTTP_CONFLICT);
     }
     // Check the data hashes.
-    $unmatched_keys = \array_values(\array_filter(\array_keys($expected_auto_saves), function ($key) use ($expected_auto_saves, $all_auto_saves) {
-      return !\hash_equals($expected_auto_saves[$key]['data_hash'], $all_auto_saves[$key]['data_hash']);
+    $unmatched_keys = \array_values(\array_filter(\array_keys($expected_auto_saves), function ($key) use ($expected_auto_saves, $publishable_auto_saves) {
+      return !\hash_equals($expected_auto_saves[$key]['data_hash'], $publishable_auto_saves[$key]['data_hash']);
     }));
     if ($unmatched_keys) {
       return new JsonResponse(data: [
@@ -98,7 +98,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
             'pointer' => $key,
           ],
           'code' => ErrorCodesEnum::UnmatchedItemInPublishRequest->value,
-          'meta' => \array_intersect_key($all_auto_saves[$key], \array_flip([
+          'meta' => \array_intersect_key($publishable_auto_saves[$key], \array_flip([
             'entity_type',
             'entity_id',
             'label',
@@ -116,7 +116,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
         continue;
       }
       $global_dependency_key = AutoSaveManager::getAutoSaveKey($global_dependency);
-      if (\array_key_exists($global_dependency_key, $all_auto_saves) && !\array_key_exists($global_dependency_key, $expected_auto_saves)) {
+      if (\array_key_exists($global_dependency_key, $publishable_auto_saves) && !\array_key_exists($global_dependency_key, $expected_auto_saves)) {
         foreach ($expected_auto_saves as $client_auto_save) {
           if ($client_auto_save['entity_type'] === JavaScriptComponent::ENTITY_TYPE_ID) {
             return new JsonResponse(data: [
@@ -127,7 +127,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
                     'pointer' => $global_dependency_key,
                   ],
                   'code' => ErrorCodesEnum::GlobalAssetNotPublished->value,
-                  'meta' => \array_intersect_key($all_auto_saves[$global_dependency_key], \array_flip([
+                  'meta' => \array_intersect_key($publishable_auto_saves[$global_dependency_key], \array_flip([
                     'entity_type',
                     'entity_id',
                     'label',
@@ -182,29 +182,50 @@ final class ApiAutoSaveController extends ApiControllerBase {
   }
 
   /**
+   * Returns auto-saves the current user may see and act on.
+   *
+   * Mirrors both filters ::get() applies before returning data to the client:
+   * 'view label' access and is_default_translation. All three endpoints
+   * (GET, POST, DELETE) call this so the allowed set stays in sync.
+   *
+   * Pass $cache to collect cacheability metadata (needed by ::get()); omit it
+   * for state-mutating callers (::post(), ::delete()).
+   *
+   * @param bool $with_conflicts
+   *   Whether to populate the 'conflict_id' key on each entry.
+   * @param \Drupal\Core\Cache\CacheableMetadata|null $cache
+   *   Optional metadata collector; receives entity and access dependencies.
+   *
+   * @return array<string, array>
+   *   Auto-save entries keyed by auto-save key, filtered to what GET exposes.
+   */
+  private function getPublishableAutoSaves(bool $with_conflicts, ?CacheableMetadata $cache = NULL): array {
+    $all = $this->autoSaveManager->getAllAutoSaveList(with_entities: TRUE, with_conflicts: $with_conflicts);
+    return \array_filter($all, function (array $item) use ($cache): bool {
+      \assert($item['entity'] instanceof EntityInterface);
+      $access = $item['entity']->access('view label', return_as_object: TRUE);
+      if ($cache !== NULL) {
+        // @todo This will result in the cache tag for this entity being returned
+        //   in the response even though the user does not have access to view
+        //   the entity. A less privileged user could still be able to determine
+        //   that the entity exists and has pending changes. Determine if we
+        //   should prevent this in https://drupal.org/i/3535355.
+        $cache->addCacheableDependency($item['entity']);
+        $cache->addCacheableDependency($access);
+      }
+      // Hide non-default-translation auto-saves until langcode-aware discard
+      // lands and asymmetrical translation is supported.
+      // @todo Remove this filtering in https://git.drupalcode.org/project/canvas/-/work_items/3591703.
+      return $access->isAllowed() && ($item['is_default_translation'] ?? TRUE);
+    });
+  }
+
+  /**
    * Gets the auto-saved changes.
    */
   public function get(): CacheableJsonResponse {
     $cache = new CacheableMetadata();
-
-    // Filter those the user has access to.
-    $filtered = \array_filter($this->autoSaveManager->getAllAutoSaveList(with_entities: TRUE, with_conflicts: TRUE), function (array $item) use ($cache) {
-      \assert($item['entity'] instanceof EntityInterface);
-      $access = $item['entity']->access('view label', return_as_object: TRUE);
-      // @todo This will result in the cache tag for this entity being returned
-      //   in the response even though the user does not have access to view the
-      //   entity. A less privileged user could still be able to determine that
-      //   the entity exists and has pending changes. Determine if we should
-      //   prevent this in https://drupal.org/i/3535355.
-      $cache->addCacheableDependency($item['entity']);
-      $cache->addCacheableDependency($access);
-      return $access->isAllowed();
-    });
-
-    // Hide non-default-translation auto-saves until langcode-aware
-    // discard land and asymmetrical translation is supported.
-    // @todo Remove this filtering in https://git.drupalcode.org/project/canvas/-/work_items/3591703.
-    $filtered = \array_filter($filtered, fn (array $item): bool => $item['is_default_translation'] ?? TRUE);
+    $filtered = $this->getPublishableAutoSaves(with_conflicts: TRUE, cache: $cache);
 
     $userIds = \array_column($filtered, 'owner');
     /** @var \Drupal\user\UserInterface[] $users */
@@ -278,12 +299,12 @@ final class ApiAutoSaveController extends ApiControllerBase {
   public function post(Request $request): JsonResponse {
     $client_auto_saves = \json_decode($request->getContent(), TRUE);
     \assert(\is_array($client_auto_saves));
-    $all_auto_saves = $this->autoSaveManager->getAllAutoSaveList(with_entities: TRUE, with_conflicts: FALSE);
-    if ($validation_response = self::validateExpectedAutoSaves($client_auto_saves, $all_auto_saves)) {
+    $publishable_auto_saves = $this->getPublishableAutoSaves(with_conflicts: FALSE);
+    if ($validation_response = self::validateExpectedAutoSaves($client_auto_saves, $publishable_auto_saves)) {
       return $validation_response;
     }
 
-    if (\count($all_auto_saves) === 0) {
+    if (\count($publishable_auto_saves) === 0) {
       return new JsonResponse(data: ['message' => 'No items to publish.'], status: Response::HTTP_NO_CONTENT);
     }
 
@@ -298,7 +319,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
     $autoSaveEntities = [];
     // The client auto-saves do not contain the 'data' key, so we need to use
     // the versions from the auto-save manager.
-    $publish_auto_saves = array_intersect_key($all_auto_saves, $client_auto_saves);
+    $publish_auto_saves = array_intersect_key($publishable_auto_saves, $client_auto_saves);
     // The number of logical items the client published, for the response
     // message. Sibling translations (added below) and config overlay drafts
     // (filtered from the pending list entirely) are part of one logical item,
@@ -313,6 +334,7 @@ final class ApiAutoSaveController extends ApiControllerBase {
     // list, so the client can only ever select the default one.
     // @see \Drupal\canvas\Controller\ApiAutoSaveController::get()
     // @see \Drupal\canvas\AutoSave\AutoSaveManager::getTranslationGroupAutoSaves()
+    $all_auto_saves = $this->autoSaveManager->getAllAutoSaveList(with_entities: TRUE, with_conflicts: FALSE);
     $publish_auto_saves = self::includeSiblingTranslationAutoSaves($publish_auto_saves, $all_auto_saves);
 
     // We want to report all access errors at one, so keeping the labels.
@@ -480,10 +502,18 @@ final class ApiAutoSaveController extends ApiControllerBase {
     //   default translation and cannot identify which one the editor acted on;
     //   irrelevant while discard is atomic, revisit for asymmetric translation
     //   in https://git.drupalcode.org/project/canvas/-/work_items/3591703
-    $group = $this->autoSaveManager->getTranslationGroupAutoSaves($entity);
-    if ($group === []) {
+    //
+    // Only discard entities whose auto-save is publishable — i.e. default-
+    // translation entries. Non-default-translation auto-saves are hidden from
+    // GET and must not be directly actionable here either. An entity with no
+    // publishable auto-save (either it does not exist or it is a non-default
+    // translation) is treated identically as not found.
+    $publishable_auto_saves = $this->getPublishableAutoSaves(with_conflicts: FALSE);
+    $key = AutoSaveManager::getAutoSaveKey($entity);
+    if (!isset($publishable_auto_saves[$key])) {
       return new JsonResponse(data: ['error' => 'No auto-save data found for this entity.'], status: Response::HTTP_NOT_FOUND);
     }
+    $group = $this->autoSaveManager->getTranslationGroupAutoSaves($entity);
     foreach ($group as $member) {
       $this->autoSaveManager->delete($member);
     }
